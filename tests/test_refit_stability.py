@@ -28,7 +28,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import insider_cluster_buys as ics  # noqa: E402
-import refit_stability as rs  # noqa: E402
+from tools import refit_stability as rs  # noqa: E402
 from research import model as rm  # noqa: E402
 
 

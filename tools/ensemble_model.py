@@ -149,11 +149,11 @@ Combination methods (--combine-methods, default both)
 ===========================================================================
 Usage
 ===========================================================================
-    python ensemble_model.py --mode drop1pct --n-replicates 20
-    python ensemble_model.py --mode bootstrap --n-replicates 20 --n-members 20
-    python ensemble_model.py --baseline-only        # fast: just the unperturbed
+    python tools/ensemble_model.py --mode drop1pct --n-replicates 20
+    python tools/ensemble_model.py --mode bootstrap --n-replicates 20 --n-members 20
+    python tools/ensemble_model.py --baseline-only        # fast: just the unperturbed
                                                       # ensemble fit + vol-match
-    python ensemble_model.py --regularized --mode drop1pct   # lever 2 (section 7)
+    python tools/ensemble_model.py --regularized --mode drop1pct   # lever 2 (section 7)
 """
 
 from __future__ import annotations
@@ -161,6 +161,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 import time
 from datetime import date
 from typing import Optional
@@ -169,7 +170,16 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_1samp
 
-import refit_stability as rs
+# Run directly (`python tools/ensemble_model.py ...`), the interpreter puts
+# this file's own directory (tools/) on sys.path[0], not the repo root -- so
+# the imports below would fail without this. Harmless no-op when this
+# module is instead imported normally (e.g. `from tools import
+# ensemble_model`), since the repo root is already on sys.path in that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tools import refit_stability as rs
 from research import model as rm
 
 log = logging.getLogger(__name__)

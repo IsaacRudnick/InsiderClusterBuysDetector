@@ -212,7 +212,7 @@ def apply_price_overrides(
     if not events:
         return df
 
-    from split_fingerprint import SplitEvent, apply_adjustment  # local: see docstring
+    from .split_fingerprint import SplitEvent, apply_adjustment  # local: see docstring
 
     to_apply: list[SplitEvent] = []
     for ev in events:

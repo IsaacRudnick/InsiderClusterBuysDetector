@@ -159,8 +159,8 @@ SPAC vehicles genuinely are unrelated companies. Flagged for manual review,
 not silently accepted.
 
 Usage:
-    python ticker_reuse.py --scan --events clusters_history/events_20180717_20260717.parquet
-    python ticker_reuse.py --scan --events ... --out report.csv
+    python backtest/ticker_reuse.py --scan --events clusters_history/events_20180717_20260717.parquet
+    python backtest/ticker_reuse.py --scan --events ... --out report.csv
 """
 
 from __future__ import annotations
@@ -170,11 +170,22 @@ import difflib
 import logging
 import os
 import re
+import sys
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
 import pandas as pd
+
+# Run directly (`python backtest/ticker_reuse.py ...`), the interpreter puts
+# this file's own directory (backtest/) on sys.path[0], not the repo root --
+# so the absolute `backtest.tickers` import below would fail without this.
+# Harmless no-op when this module is instead imported normally (e.g. `from
+# backtest import ticker_reuse`), since the repo root is already on sys.path
+# in that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from backtest.tickers import normalize_ticker
 

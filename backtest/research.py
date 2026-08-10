@@ -38,8 +38,8 @@ import numpy as np
 import pandas as pd
 
 import insider_cluster_buys as ics
-import ticker_reuse
 from . import splits as splits_mod
+from . import ticker_reuse
 from .prices import PriceUniverse
 from .signal_fit import MAX_ENTRY_LOOKAHEAD, _find_entry_day, _open_or_fallback
 from .state import DailyStateBuilder

@@ -477,7 +477,7 @@ class PriceUniverse:
             # (see price_overrides.py). Idempotent: a frame already on the
             # corrected basis is left alone, so re-reading an
             # already-adjusted cache file every call never double-adjusts it.
-            from price_overrides import apply_price_overrides
+            from .price_overrides import apply_price_overrides
             df = apply_price_overrides(ticker, df)
             return df
         except Exception as exc:
@@ -644,7 +644,7 @@ class PriceUniverse:
                     # `new` reads the correction itself as a spurious basis
                     # change (see _merge_price_frames) and discards it -- the
                     # exact way the 2026-08-07 DKI corruption happened.
-                    from price_overrides import apply_price_overrides
+                    from .price_overrides import apply_price_overrides
                     new = apply_price_overrides(t, new)
                     existing = self._load_cached(t)
                     merged = self._merge_price_frames(t, existing, new)

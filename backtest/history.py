@@ -17,8 +17,8 @@ from typing import Optional
 import pandas as pd
 
 import insider_cluster_buys as ics
-import ticker_reuse
 from . import tickers as tickers_module
+from . import ticker_reuse
 
 log = logging.getLogger(__name__)
 

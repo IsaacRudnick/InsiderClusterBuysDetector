@@ -106,9 +106,9 @@ ticker_reuse.py / split_fingerprint.py / research.model.save_oof_scores):
     and a PASS/FAIL verdict.
 
 Usage:
-    python refit_stability.py
-    python refit_stability.py --n-replicates 20 --mode drop1pct
-    python refit_stability.py --mode bootstrap --n-replicates 20
+    python tools/refit_stability.py
+    python tools/refit_stability.py --n-replicates 20 --mode drop1pct
+    python tools/refit_stability.py --mode bootstrap --n-replicates 20
 """
 
 from __future__ import annotations
@@ -116,12 +116,23 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 import time
 from datetime import date
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+# Run directly (`python tools/refit_stability.py ...`), the interpreter puts
+# this file's own directory (tools/) on sys.path[0], not the repo root -- so
+# `from research import model` below would fail without this. Harmless
+# no-op when this module is instead imported normally (e.g. `from tools
+# import refit_stability`), since the repo root is already on sys.path in
+# that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from research import model as rm
 
@@ -170,7 +181,7 @@ VOLMATCH_THRESHOLD_PP_DEFAULT = 0.02
 # backtest/research.py added 9 concurrent-selling feature columns that do
 # not exist in that pinned file, so calling fit_and_validate on it with the
 # default feature_cols=None now raises "missing x_ feature column(s)" --
-# confirmed by running `python refit_stability.py` with no arguments after
+# confirmed by running `python tools/refit_stability.py` with no arguments after
 # that change: every replicate (including the plain production-threshold
 # baseline) fails to fit, not just this module's own tail_thresh additions.
 #

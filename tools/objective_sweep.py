@@ -72,8 +72,8 @@ backtest is 15+ minutes and is being run separately), and this script does
 not touch backtest/strategies.py, backtest/engine.py, or backtest/report.py.
 
 Usage:
-    python objective_sweep.py
-    python objective_sweep.py --n-shuffle-seeds 20   # slower, unnecessary (see FAST-FIT NOTE)
+    python tools/objective_sweep.py
+    python tools/objective_sweep.py --n-shuffle-seeds 20   # slower, unnecessary (see FAST-FIT NOTE)
 """
 
 from __future__ import annotations
@@ -81,6 +81,7 @@ from __future__ import annotations
 import argparse
 import logging
 import os
+import sys
 import time
 from datetime import date
 from typing import Optional
@@ -89,8 +90,17 @@ import numpy as np
 import pandas as pd
 from scipy.stats import ttest_1samp
 
-import refit_stability as rs
-from ensemble_model import _pad_for_schema, _resolve_feature_cols
+# Run directly (`python tools/objective_sweep.py ...`), the interpreter puts
+# this file's own directory (tools/) on sys.path[0], not the repo root -- so
+# the imports below would fail without this. Harmless no-op when this
+# module is instead imported normally, since the repo root is already on
+# sys.path in that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+
+from tools import refit_stability as rs
+from tools.ensemble_model import _pad_for_schema, _resolve_feature_cols
 from research import model as rm
 
 log = logging.getLogger(__name__)

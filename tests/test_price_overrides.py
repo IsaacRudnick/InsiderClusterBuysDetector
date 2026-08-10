@@ -23,7 +23,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import price_overrides as po  # noqa: E402
+from backtest import price_overrides as po  # noqa: E402
 from backtest import prices as prices_mod  # noqa: E402
 
 

@@ -19,7 +19,7 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
-import split_fingerprint as sf  # noqa: E402
+from backtest import split_fingerprint as sf  # noqa: E402
 
 
 # ---------------------------------------------------------------------------

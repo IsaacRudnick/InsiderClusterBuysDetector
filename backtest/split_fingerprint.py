@@ -65,9 +65,9 @@ screen these out with a distinct "untradeable" verdict before the fingerprint
 logic ever runs.
 
 Usage:
-    python split_fingerprint.py --scan                 # report only, writes nothing
-    python split_fingerprint.py --scan --out report.csv
-    python split_fingerprint.py --apply                # backs up, then writes
+    python backtest/split_fingerprint.py --scan                 # report only, writes nothing
+    python backtest/split_fingerprint.py --scan --out report.csv
+    python backtest/split_fingerprint.py --apply                # backs up, then writes
 """
 
 from __future__ import annotations
@@ -79,12 +79,23 @@ import logging
 import math
 import os
 import shutil
+import sys
 from dataclasses import dataclass
 from datetime import date
 from typing import Optional
 
 import numpy as np
 import pandas as pd
+
+# Run directly (`python backtest/split_fingerprint.py ...`), the interpreter
+# puts this file's own directory (backtest/) on sys.path[0], not the repo
+# root -- so the absolute `backtest.prices` import below would fail without
+# this. Harmless no-op when this module is instead imported normally (e.g.
+# `from backtest import split_fingerprint`), since the repo root is already
+# on sys.path in that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from backtest.prices import CACHE_DIR
 
