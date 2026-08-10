@@ -24,9 +24,9 @@ Resumable: a repaired ticker naturally drops out of find_suspect_tickers on
 the next scan, so an interrupted or partial run is safe to just run again.
 
 Usage:
-    python repair_price_cache.py --dry-run
-    python repair_price_cache.py --limit 20
-    python repair_price_cache.py
+    python tools/repair_price_cache.py --dry-run
+    python tools/repair_price_cache.py --limit 20
+    python tools/repair_price_cache.py
 """
 
 from __future__ import annotations
@@ -37,9 +37,20 @@ import json
 import logging
 import os
 import shutil
+import sys
 from datetime import date
 
 import pandas as pd
+
+# Run directly (`python tools/repair_price_cache.py ...`), the interpreter
+# puts this file's own directory (tools/) on sys.path[0], not the repo root
+# -- so `from backtest.prices import ...` below would fail without this.
+# Harmless no-op when this module is instead imported normally (e.g. `from
+# tools import repair_price_cache`), since the repo root is already on
+# sys.path in that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from backtest.prices import (
     CACHE_DIR,

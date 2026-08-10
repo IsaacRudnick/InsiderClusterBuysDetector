@@ -21,7 +21,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from backtest import prices as prices_mod  # noqa: E402
-import repair_price_cache  # noqa: E402
+from tools import repair_price_cache  # noqa: E402
 
 
 def _frame(dates: list[date], closes: list[float], volumes: list[float] | None = None) -> pd.DataFrame:

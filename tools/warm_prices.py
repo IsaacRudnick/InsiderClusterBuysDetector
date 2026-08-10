@@ -6,9 +6,9 @@ universe takes hours because of yfinance rate limits. A warm cache makes the
 price phase almost free, so model iteration costs seconds instead of a day.
 
 Usage:
-    python warm_prices.py                      # widest file in clusters_history/
-    python warm_prices.py --events <path>      # a specific parquet
-    python warm_prices.py --limit 200          # first N tickers, for a smoke test
+    python tools/warm_prices.py                      # widest file in clusters_history/
+    python tools/warm_prices.py --events <path>      # a specific parquet
+    python tools/warm_prices.py --limit 200          # first N tickers, for a smoke test
 
 The cache is incremental. Stop this script and start it again at any time.
 Tickers that are already cached over the requested range are skipped.
@@ -18,10 +18,20 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 from datetime import date, timedelta
 
 import pandas as pd
+
+# Run directly (`python tools/warm_prices.py ...`), the interpreter puts
+# this file's own directory (tools/) on sys.path[0], not the repo root -- so
+# `from backtest import ...` below would fail without this. Harmless no-op
+# when this module is instead imported normally, since the repo root is
+# already on sys.path in that case.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
 
 from backtest import history, prices, tickers as tickers_module
 

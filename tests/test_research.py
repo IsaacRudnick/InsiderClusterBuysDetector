@@ -26,7 +26,7 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 import ipo_lookup  # noqa: E402
-import ticker_reuse  # noqa: E402
+from backtest import ticker_reuse  # noqa: E402
 from backtest import research  # noqa: E402
 from backtest import splits as splits_mod  # noqa: E402
 from backtest.state import DailyStateBuilder  # noqa: E402
