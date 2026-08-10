@@ -1,0 +1,46 @@
+# Contains SEC_USER_AGENT with a real contact email. See .env.example.
+.env
+
+# ---------------------------------------------------------------------------
+# Caches. Expensive to rebuild but reproducible, and far too large for git.
+# ---------------------------------------------------------------------------
+# ~1.3M JSON files, one per SEC accession (~2 GB). Rebuilt by scraping, at
+# roughly a day per year of history -- back it up, but do not commit it.
+parse_cache/
+# Per-ticker price parquets (~420 MB), refetched from Yahoo on demand.
+price_cache/
+ipo_cache/
+
+# ---------------------------------------------------------------------------
+# Generated outputs
+# ---------------------------------------------------------------------------
+# One directory per backtest run: report.html plus equity_*/trades_*.csv for
+# every strategy x exit pair. Hundreds of MB per full grid run.
+out/
+# Scraped event parquets (~100 MB) -- regenerate with backtest.py, or keep
+# your own backup. Committing them would bloat history permanently.
+clusters_history/
+# Research datasets, OOF scores, fitted model bundles, stability summaries.
+# All reproducible via run_research.py.
+research_data/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.coverage
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Editors / OS
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+desktop.ini

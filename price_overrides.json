@@ -1,0 +1,109 @@
+{
+  "schema_version": 1,
+  "_readme": [
+    "Durable manual split corrections for price_cache/*.parquet.",
+    "Why this file exists: Yahoo's own split table is missing certain reverse",
+    "splits (see split_fingerprint.py's docstring). auto_adjust=True cannot",
+    "back-adjust a split Yahoo does not know happened, so any fix applied",
+    "directly to a cached parquet file gets silently destroyed the next time",
+    "backtest/prices.py re-fetches that ticker -- confirmed 2026-08-07 when a",
+    "hand-applied DKI fix was overwritten by a routine backtest run.",
+    "This file is the durable source of truth instead. backtest/prices.py",
+    "(see apply_price_overrides in price_overrides.py) re-applies every entry",
+    "below to a ticker's frame on every load AND every fetch, so no re-fetch",
+    "can lose the correction again. Each entry independently checks whether",
+    "the raw jump it describes is still present before adjusting -- see",
+    "price_overrides.py:_jump_present -- so an already-corrected frame (or a",
+    "ticker Yahoo has since fixed itself) is left alone rather than",
+    "double-adjusted.",
+    "price_ratio is the raw overnight close ratio (close[date] /",
+    "close[previous bar]) for a reverse split, matching split_fingerprint.py's",
+    "SplitEvent.price_ratio convention. observed_volume_ratio and",
+    "observed_dollar_volume_ratio are recorded for provenance only (they are",
+    "not re-validated on load); they are the median-window volume fingerprint",
+    "values split_fingerprint.detect_unadjusted_splits computed against the",
+    "cache at the time each entry was added."
+  ],
+  "overrides": [
+    {
+      "ticker": "DKI",
+      "date": "2026-05-11",
+      "price_ratio": 16.696,
+      "who": "manual review, 2026-08-04 (see price_cache/_pre_split_fingerprint_backup/DKI.parquet)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this 1-for-16.7 reverse split. Confirmed by the price/volume fingerprint: close 0.336 -> 5.610 (16.696x) while volume 636,700 -> 68,900 (0.108x) on the adjacent bars, dollar volume roughly preserved (1.81x). Falls below split_fingerprint.py's MIN_PRE_JUMP_DOLLAR_VOLUME tradeability floor (pre-jump ~$214k median-window dollar volume < $500k), so the automated --scan does not surface it as 'split' on its own; this entry is the confirmed manual override the automated scan would otherwise miss. A hand-applied fix to the parquet was overwritten by a re-fetch on 2026-08-07, which is the incident that prompted this override mechanism.",
+      "observed_volume_ratio": 0.1082,
+      "observed_dollar_volume_ratio": 1.8068
+    },
+    {
+      "ticker": "FFAI",
+      "date": "2026-07-23",
+      "price_ratio": 96.4286,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/FFAI.parquet: price x96.4286, median-window volume x0.02822, dollar volume x2.721.",
+      "observed_volume_ratio": 0.028216,
+      "observed_dollar_volume_ratio": 2.720877
+    },
+    {
+      "ticker": "TTOO",
+      "date": "2022-10-13",
+      "price_ratio": 45.5357,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/TTOO.parquet: price x45.5357, median-window volume x0.06256, dollar volume x2.849.",
+      "observed_volume_ratio": 0.062557,
+      "observed_dollar_volume_ratio": 2.848584
+    },
+    {
+      "ticker": "ASBP",
+      "date": "2026-05-11",
+      "price_ratio": 29.8378,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/ASBP.parquet: price x29.8378, median-window volume x0.01357, dollar volume x0.405.",
+      "observed_volume_ratio": 0.013568,
+      "observed_dollar_volume_ratio": 0.404844
+    },
+    {
+      "ticker": "CMCT",
+      "date": "2025-01-06",
+      "price_ratio": 9.88235,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/CMCT.parquet: price x9.8824, median-window volume x0.11397, dollar volume x1.126.",
+      "observed_volume_ratio": 0.113967,
+      "observed_dollar_volume_ratio": 1.126263
+    },
+    {
+      "ticker": "OPAD",
+      "date": "2026-06-05",
+      "price_ratio": 8.33784,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/OPAD.parquet: price x8.3378, median-window volume x0.12223, dollar volume x1.019.",
+      "observed_volume_ratio": 0.122233,
+      "observed_dollar_volume_ratio": 1.019157
+    },
+    {
+      "ticker": "NXTP",
+      "date": "2023-12-22",
+      "price_ratio": 3.016575,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/NXTP.parquet: price x3.0166, median-window volume x0.21345, dollar volume x0.644. Note: the single bar immediately after the boundary has an anomalous volume spike (94.1M shares) that makes a naive adjacent-bar volume ratio look like a rise; split_fingerprint's 10-bar median window (the methodology this override reuses) correctly reads this as a volume collapse.",
+      "observed_volume_ratio": 0.213450,
+      "observed_dollar_volume_ratio": 0.643887
+    },
+    {
+      "ticker": "AIRJ",
+      "date": "2024-03-11",
+      "price_ratio": 2.814423,
+      "who": "split_fingerprint.py --scan (volume-proportionality filter)",
+      "when_added": "2026-08-07",
+      "why": "Yahoo's split table is missing this reverse split. Confirmed 'split' verdict from split_fingerprint.detect_unadjusted_splits against price_cache/AIRJ.parquet: price x2.8144, median-window volume x0.37371, dollar volume x1.052.",
+      "observed_volume_ratio": 0.373714,
+      "observed_dollar_volume_ratio": 1.051790
+    }
+  ]
+}
