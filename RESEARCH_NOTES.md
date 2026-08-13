@@ -98,7 +98,7 @@ next to every model result.
   (33.5%), 40 rate-limited (0.5%, recoverable on a re-run).** That missing
   third is the survivorship exposure. It is concentrated in the delisted
   micro-caps that insider clusters favour, so it is not a random third.
-- `warm_prices.py` used to read the events parquet directly and apply its own
+- `tools/warm_prices.py` used to read the events parquet directly and apply its own
   crude cleanup, which bypassed `backtest/tickers.normalize_ticker`. It
   therefore spent requests on junk and never fetched the recovered form of a
   malformed symbol. Fixed. Note that `normalize_ticker_series` returns None
@@ -119,7 +119,9 @@ next to every model result.
   written against), numpy 2.5.1, pyarrow 25.0.0, scikit-learn 1.9.0,
   lightgbm 4.7.0, yfinance 1.5.2, plotly 6.9.0.
 - `requirements.txt` did not exist before this work. `backtest.bat` referenced
-  it and would exit. `build_readme.bat` still calls a missing `render_readme.py`.
+  it and would exit. `build_readme.bat` called a missing `render_readme.py` to
+  render a `README.md` that had never been written; it is now deleted, and
+  `README.md` and `run.bat` (the screener launcher it also assumed) exist.
 
 ## Changes landed
 
@@ -136,7 +138,7 @@ next to every model result.
   recorded missing after it fails on its own. `median_dollar_volume` is now
   memoized and binary-searched (verified 297/297 parity with the old scan).
 - `backtest/tickers.py` + `tests/test_tickers.py` (78 tests).
-- `warm_prices.py`: one-time bulk price cache fill.
+- `tools/warm_prices.py`: one-time bulk price cache fill.
 
 ## Phase 2 landed: event-level research dataset
 
@@ -331,7 +333,7 @@ microcaps do make, comes with a volume spike.
   independently (18 of 18 checks, including the DRIO shape, `dollar_volume`
   invariance, forward splits and trailing stale rows). It just does not fix
   the problem above.
-- `repair_price_cache.py` rests on a false premise. Refetching does not
+- `tools/repair_price_cache.py` rests on a false premise. Refetching does not
   help, because Yahoo serves the same broken series again. Six tickers were
   repaired before this was understood. That was harmless: originals are
   backed up under `price_cache/_pre_repair_backup/`, and the refetched data
@@ -482,7 +484,10 @@ Findings:
 3. NOT a pooling artifact. Per-fold mean IC (-0.1121) matches pooled IC
    (-0.1184), so measuring per fold does not change the picture.
 
-Scripts: `tmp/shuffle_null.py`, `tmp/check_pooled_ic.py`.
+Scripts: `tmp/shuffle_null.py`, `tmp/check_pooled_ic.py` — ad-hoc, never
+committed, and no longer on disk. The numbers above are therefore a record,
+not something you can re-run. Rebuild them under `tools/` if this needs
+re-testing.
 
 The real test should ask whether the TRUE model's IC is extreme against
 this empirical null, not whether a noise model clears a fixed constant.

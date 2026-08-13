@@ -10,6 +10,8 @@ parse_cache/
 # Per-ticker price parquets (~420 MB), refetched from Yahoo on demand.
 price_cache/
 ipo_cache/
+# One JSON per issuer CIK (SIC code, exchange), refilled by tools/issuer_meta.py.
+issuer_meta_cache/
 
 # ---------------------------------------------------------------------------
 # Generated outputs
