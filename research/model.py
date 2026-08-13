@@ -78,6 +78,53 @@ PRIMARY_HORIZON = 63
 LABEL_COL = f"adj_{PRIMARY_HORIZON}"
 TAIL_THRESH = 0.20
 
+# --- Sharpe objective -------------------------------------------------------
+# Sharpe is a PORTFOLIO property (mean / stdev of a return stream), and this
+# module scores one event at a time, so it cannot be a per-row loss function.
+# The translation used here has two halves, and both are needed -- neither on
+# its own is "training for Sharpe":
+#
+#   1. TRAIN on a per-trade Sharpe proxy: the horizon's excess return divided
+#      by the event's own ex-ante annualized volatility (SHARPE_VOL_COL). A
+#      model fit on raw adj_63 is rewarded for finding big moves, and big
+#      moves live in high-volatility names -- which is exactly how the shipped
+#      tail_classifier ended up correlating +0.69 with x_vol_63_ann while
+#      ranking NEGATIVELY against forward return. Dividing by vol removes that
+#      reward channel: a 20% gain on a quiet name now outranks a 40% gain on a
+#      name twice as wild, which is the per-trade statement of "higher Sharpe".
+#   2. SELECT on realized portfolio Sharpe: portfolio_sharpe_table() rebuilds
+#      the equal-weight top-N book each score would have held out-of-fold and
+#      reports its actual Sharpe. That is the real metric; step 1 only shapes
+#      what the model chases.
+#
+# SHARPE_VOL_COL is an x_ feature, so it is point-in-time by construction
+# (backtest/research.py computes it from closes strictly before entry) and is
+# already in FEATURE_COLS -- using it as a label denominator introduces no
+# information the model cannot see at decision time.
+SHARPE_VOL_COL = "x_vol_63_ann"
+
+# Floor on the denominator, in the same annualized-vol units as
+# SHARPE_VOL_COL. Without it a near-zero vol reading turns an ordinary return
+# into a huge label and one row dominates the fit.
+#
+# Measured on research_groupE_10905rows_20260809.parquet (10,383 non-null):
+# median 0.441, p25 0.281, p05 0.157, p01 0.087, p0.5 0.046, p0.1 0.007,
+# min 0.000. A stretch of identical closes -- a stale or barely-traded series,
+# not a quiet company -- is the only thing that reads near zero here. 0.10
+# clips 136 rows (1.3%) and sits below the 1st percentile, so it catches those
+# broken series while leaving every legitimately low-vol name untouched.
+#
+# Note this floor only bounds the label; _fit_regressor still winsorizes at
+# WINSOR_LO_PCT/WINSOR_HI_PCT, which on this dataset trims the ratio to about
+# [-1.27, +1.63] against a raw max near 79.
+SHARPE_VOL_FLOOR = 0.10
+
+# Internal name for the derived per-trade Sharpe target. Leading underscore
+# and the "_label" suffix keep it from ever colliding with a real dataset
+# column: it is attached to a per-fold copy of the training frame and never
+# written to disk.
+_SHARPE_LABEL_COL = "_sharpe_label"
+
 
 def label_col_for_horizon(horizon: int) -> str:
     """The adj_<horizon> forward-return column fit_and_validate actually
@@ -366,6 +413,42 @@ def random_score(n: int, seed: int) -> np.ndarray:
     return rng.standard_normal(n)
 
 
+def sharpe_label(
+    df: pd.DataFrame, label_col: str = LABEL_COL, vol_col: str = SHARPE_VOL_COL,
+    vol_floor: float = SHARPE_VOL_FLOOR,
+) -> pd.Series:
+    """Per-trade Sharpe proxy: `label_col` divided by the event's own ex-ante
+    annualized volatility, floored at `vol_floor`.
+
+    This is the training target for the `sharpe` model. See SHARPE_VOL_COL's
+    comment for why the ratio, and not raw return, is what "maximize Sharpe"
+    translates to at row level.
+
+    Rows whose vol is missing come back NaN rather than falling back to the
+    raw return. A NaN label row is dropped from the sharpe fit, which is the
+    honest outcome: with no volatility estimate there is no risk-adjusted
+    number to learn from, and substituting the unadjusted return would feed
+    the fit exactly the high-vol rows this objective exists to discount.
+    """
+    y = df[label_col].astype(float)
+    vol = df[vol_col].astype(float)
+    denom = vol.where(vol.notna()).clip(lower=vol_floor)
+    return y / denom
+
+
+# Annualization factor for a Sharpe measured on non-overlapping holds of
+# PRIMARY_HORIZON trading days: 252 / horizon periods per year, so the ratio
+# scales by its square root. Overlapping entries make the realized figure
+# optimistic (see portfolio_sharpe_table's docstring), which is why that
+# function reports n_periods alongside every number it produces.
+TRADING_DAYS_PER_YEAR = 252
+
+# Top-N book sizes portfolio_sharpe_table evaluates. Spans the range the
+# model_ranked_* strategy family actually uses (5..100 slots) so the table can
+# be read directly against a backtest run.
+SHARPE_TOP_NS: tuple[int, ...] = (5, 10, 25, 50, 100)
+
+
 # ---------------------------------------------------------------------------
 # 4. Metrics
 # ---------------------------------------------------------------------------
@@ -502,6 +585,102 @@ def _monotonicity(mean_by_rank: pd.Series) -> dict:
         "n_violations": n_violations,
         "rank_corr": rank_corr,
     }
+
+
+def portfolio_sharpe_table(
+    oof_scores: pd.DataFrame,
+    score_cols: list[str],
+    *,
+    label_col: str = LABEL_COL,
+    horizon: int = PRIMARY_HORIZON,
+    top_ns: tuple[int, ...] = SHARPE_TOP_NS,
+) -> pd.DataFrame:
+    """Realized Sharpe of the equal-weight top-N book each score would have
+    held, measured out-of-fold. This is the metric the `sharpe` objective is
+    ultimately judged on; the per-row label it trains against is only a proxy
+    (see SHARPE_VOL_COL).
+
+    Construction, and why each choice is the conservative one:
+
+    - **Non-overlapping periods.** entry_idx (a trading-day index) is bucketed
+      into blocks of `horizon` days, so a book formed in one block has closed
+      before the next block forms. Sharpe on OVERLAPPING entries is inflated,
+      because the same price path is counted in several periods and the
+      period-to-period correlation that creates is not in the denominator.
+      Bucketing costs sample size and buys a number that means what it says.
+    - **Equal weight, top N by score.** Matches what model_ranked_n{NN}_*
+      actually does in the engine, so the table is comparable to a backtest
+      run rather than to an idealized long/short book.
+    - **A period with fewer than N candidates takes what it has**, and one
+      with none is dropped. Both are recorded in n_periods.
+    - **No cash leg, no rebalance cost, no capacity cap.** This measures the
+      SCORE, not a deployable strategy. Read it next to the engine's own
+      numbers, never in place of them.
+
+    Returns one row per (score, n) with: n_periods, mean/stdev of the period
+    return, `sharpe` (annualized by sqrt(TRADING_DAYS_PER_YEAR / horizon)),
+    `hit_rate` (share of periods with a positive return), and `max_drawdown`
+    of the compounded period-return path.
+
+    Sharpe is NaN when fewer than 2 periods survive or the period returns have
+    zero variance -- a one-period "Sharpe" is not a number, and returning 0.0
+    or a large finite value there would silently rank a degenerate score top.
+    """
+    required = {"entry_idx", label_col}
+    missing = required - set(oof_scores.columns)
+    if missing:
+        raise ValueError(
+            f"portfolio_sharpe_table needs column(s) {sorted(missing)} on oof_scores; "
+            f"got {sorted(oof_scores.columns)}"
+        )
+    if horizon <= 0:
+        raise ValueError(f"portfolio_sharpe_table: horizon must be positive, got {horizon}")
+
+    df = oof_scores.dropna(subset=["entry_idx", label_col]).copy()
+    df["_period"] = (df["entry_idx"].astype(float) // horizon).astype(int)
+    ann = np.sqrt(TRADING_DAYS_PER_YEAR / horizon)
+
+    rows: list[dict] = []
+    for score_col in score_cols:
+        if score_col not in df.columns:
+            log.warning("portfolio_sharpe_table: no column %r on oof_scores; skipped", score_col)
+            continue
+        sub = df.dropna(subset=[score_col])
+        for n in top_ns:
+            period_returns: list[float] = []
+            for _, block in sub.groupby("_period"):
+                if block.empty:
+                    continue
+                picks = block.nlargest(min(n, len(block)), score_col)
+                period_returns.append(float(picks[label_col].mean()))
+            arr = np.asarray(period_returns, dtype=float)
+            arr = arr[~np.isnan(arr)]
+            n_periods = int(len(arr))
+            if n_periods >= 2 and np.std(arr, ddof=1) > 0:
+                mean, sd = float(np.mean(arr)), float(np.std(arr, ddof=1))
+                sharpe = float(mean / sd * ann)
+            else:
+                mean = float(np.mean(arr)) if n_periods else float("nan")
+                sd = float(np.std(arr, ddof=1)) if n_periods >= 2 else float("nan")
+                sharpe = float("nan")
+            if n_periods:
+                equity = np.cumprod(1.0 + arr)
+                max_dd = float((equity / np.maximum.accumulate(equity) - 1.0).min())
+                hit = float((arr > 0).mean())
+            else:
+                max_dd, hit = float("nan"), float("nan")
+            rows.append({
+                "score": score_col, "n": int(n), "n_periods": n_periods,
+                "mean_period_return": mean, "stdev_period_return": sd,
+                "sharpe": sharpe, "hit_rate": hit, "max_drawdown": max_dd,
+            })
+    out = pd.DataFrame(rows)
+    if out.empty:
+        return pd.DataFrame(columns=[
+            "score", "n", "n_periods", "mean_period_return", "stdev_period_return",
+            "sharpe", "hit_rate", "max_drawdown",
+        ])
+    return out.sort_values(["sharpe", "score", "n"], ascending=[False, True, True]).reset_index(drop=True)
 
 
 # ---------------------------------------------------------------------------
@@ -932,6 +1111,7 @@ class ValidationResult:
     interaction_report: pd.DataFrame
     interaction_summary: dict
     oof_scores: pd.DataFrame
+    portfolio_sharpe: pd.DataFrame = field(default_factory=pd.DataFrame)
     n_folds_run: int = 0
     n_folds_skipped: int = 0
     skipped_folds: list[dict] = field(default_factory=list)
@@ -940,7 +1120,7 @@ class ValidationResult:
     config: dict = field(default_factory=dict)
 
 
-_MODEL_NAMES = ("regressor", "classifier", "tail_classifier")
+_MODEL_NAMES = ("regressor", "classifier", "tail_classifier", "sharpe")
 _BASELINE_NAMES_STATIC = ("ten_pct_owner", "conviction_score")
 
 
@@ -1129,10 +1309,33 @@ def fit_and_validate(
             index=test_df.index,
         )
 
+        # Sharpe objective: same features, same fold, label divided by the
+        # event's own ex-ante vol (see sharpe_label / SHARPE_VOL_COL). Rows
+        # with no vol reading have a NaN label and are dropped from THIS fit
+        # only -- the other three models still see them, so a fold's sharpe
+        # model can legitimately train on fewer rows than its siblings.
+        sharpe_train = train_df.assign(**{_SHARPE_LABEL_COL: sharpe_label(train_df, label_col=label_col)})
+        sharpe_train = sharpe_train.dropna(subset=[_SHARPE_LABEL_COL])
+        if len(sharpe_train) >= min_fold_train_rows:
+            sharpe_model, _, _ = _fit_regressor(sharpe_train, feature_cols, params, label_col=_SHARPE_LABEL_COL)
+            sharpe_pred = pd.Series(sharpe_model.predict(test_df[feature_cols]), index=test_df.index)
+        else:
+            # Not enough vol-labelled rows to fit. Emit NaN rather than a
+            # constant: a constant would score as a tie everywhere and quietly
+            # read as "no edge" instead of "never fit".
+            log.warning(
+                "fit_and_validate: fold %d has only %d row(s) with a usable %s label "
+                "(vol column %r missing or NaN), below min_fold_train_rows=%d -- "
+                "the sharpe model is NOT fit for this fold and its OOF scores are NaN.",
+                fold.fold_id, len(sharpe_train), _SHARPE_LABEL_COL, SHARPE_VOL_COL, min_fold_train_rows,
+            )
+            sharpe_pred = pd.Series(np.nan, index=test_df.index)
+
         scores: dict[str, pd.Series] = {
             "regressor": reg_pred,
             "classifier": cls_pred,
             "tail_classifier": tail_pred,
+            "sharpe": sharpe_pred,
             "ten_pct_owner": ten_pct_owner_score(test_df),
             "conviction_score": conviction_score_baseline(test_df),
         }
@@ -1159,6 +1362,7 @@ def fit_and_validate(
             "oof_regressor": reg_pred,
             "oof_classifier": cls_pred,
             "oof_tail_classifier": tail_pred,
+            "oof_sharpe": sharpe_pred,
             "ten_pct_owner": scores["ten_pct_owner"],
             "conviction_score": scores["conviction_score"],
         }, index=test_df.index)
@@ -1230,6 +1434,24 @@ def fit_and_validate(
 
     oof_scores = pd.concat(oof_rows, axis=0).sort_index()
 
+    # Realized portfolio Sharpe of every score's top-N book, out of fold.
+    # This is what "maximize Sharpe" actually means -- the sharpe model's
+    # per-row label is only the proxy that steers the fit toward it. Computed
+    # for the baselines too, so the comparison is like-for-like.
+    portfolio_sharpe = portfolio_sharpe_table(
+        oof_scores,
+        [f"oof_{n}" for n in _MODEL_NAMES] + list(_BASELINE_NAMES_STATIC),
+        label_col=label_col, horizon=horizon,
+    )
+    if not portfolio_sharpe.empty:
+        best = portfolio_sharpe.iloc[0]
+        log.info(
+            "portfolio Sharpe (OOF, %d-day non-overlapping periods): best is %s @ n=%d "
+            "-> Sharpe %.3f over %d periods (mean %.4f, stdev %.4f, maxDD %.3f)",
+            horizon, best["score"], int(best["n"]), best["sharpe"], int(best["n_periods"]),
+            best["mean_period_return"], best["stdev_period_return"], best["max_drawdown"],
+        )
+
     # Final deployment models: fit on the FULL valid dataset. This is not a
     # CV fold -- there is no future data left to hold out at deployment
     # time, so using everything here is correct and is not a leakage path
@@ -1241,10 +1463,23 @@ def fit_and_validate(
     final_tail_target = (df_valid[label_col] > tail_thresh).astype(int)
     final_tail = _fit_classifier(df_valid, feature_cols, final_tail_target, params)
 
+    final_sharpe_df = df_valid.assign(**{_SHARPE_LABEL_COL: sharpe_label(df_valid, label_col=label_col)})
+    final_sharpe_df = final_sharpe_df.dropna(subset=[_SHARPE_LABEL_COL])
+    if len(final_sharpe_df) >= min_fold_train_rows:
+        final_sharpe, _, _ = _fit_regressor(final_sharpe_df, feature_cols, params, label_col=_SHARPE_LABEL_COL)
+    else:
+        log.warning(
+            "fit_and_validate: only %d row(s) carry a usable %s label across the whole "
+            "dataset -- no deployment sharpe model was fit (models['sharpe'] is None).",
+            len(final_sharpe_df), _SHARPE_LABEL_COL,
+        )
+        final_sharpe = None
+
     models = {
         "regressor": final_reg,
         "classifier": final_cls,
         "tail_classifier": final_tail,
+        "sharpe": final_sharpe,
     }
     config = {
         "n_folds": n_folds,
@@ -1261,6 +1496,9 @@ def fit_and_validate(
         "final_winsor_bounds": [final_lo, final_hi],
         "tail_thresh": tail_thresh,
         "label_col": label_col,
+        "sharpe_vol_col": SHARPE_VOL_COL,
+        "sharpe_vol_floor": SHARPE_VOL_FLOOR,
+        "sharpe_top_ns": list(SHARPE_TOP_NS),
     }
 
     return ValidationResult(
@@ -1275,6 +1513,7 @@ def fit_and_validate(
         interaction_report=interaction_report,
         interaction_summary=interaction_summary,
         oof_scores=oof_scores,
+        portfolio_sharpe=portfolio_sharpe,
         n_folds_run=n_folds_run,
         n_folds_skipped=n_folds_skipped,
         skipped_folds=skipped_folds,
@@ -1681,6 +1920,25 @@ def write_markdown_summary(result: ValidationResult, path: str) -> None:
 
     parts.append("## Summary metrics (mean, t-stat across folds)\n")
     parts.append(_df_to_markdown(result.summary_metrics))
+
+    parts.append("## Portfolio Sharpe (out-of-fold, equal-weight top-N book)\n")
+    if result.portfolio_sharpe.empty:
+        parts.append("Not computed (no OOF rows with a usable entry_idx and label).\n")
+    else:
+        horizon = result.config.get("horizon", PRIMARY_HORIZON)
+        parts.append(
+            f"Realized Sharpe of the book each score would have held, rebuilt on "
+            f"NON-OVERLAPPING {horizon}-trading-day periods and annualized by "
+            f"sqrt({TRADING_DAYS_PER_YEAR}/{horizon}). This is the metric the "
+            f"`sharpe` model targets; its per-row training label (adj / "
+            f"{SHARPE_VOL_COL}, floored at {SHARPE_VOL_FLOOR}) is only the proxy "
+            f"that steers the fit.\n\n"
+            f"No costs, no capacity cap, no cash leg -- this ranks SCORES, it does "
+            f"not size a strategy. `n_periods` is small by construction (the "
+            f"non-overlapping rule is what makes the number honest), so read the "
+            f"spread between rows, not any single value's third digit.\n"
+        )
+        parts.append(_df_to_markdown(result.portfolio_sharpe))
 
     parts.append("## Decile lift (mean adj_63 by score decile, aggregated across folds)\n")
     for name, table in result.decile_tables.items():

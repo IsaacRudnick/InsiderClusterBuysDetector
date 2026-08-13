@@ -1197,3 +1197,143 @@ class TestLabelFollowsHorizon:
         tail_table_default = result_default.tail_decile_tables["tail_classifier"]
         tail_table_low = result_low.tail_decile_tables["tail_classifier"]
         assert tail_table_low["mean_value"].mean() > tail_table_default["mean_value"].mean()
+
+
+class TestSharpeObjective:
+    """The `sharpe` model added so "train to maximize Sharpe" has a concrete
+    meaning at row level. Sharpe is a portfolio property and cannot be a
+    per-row loss, so it is split in two: sharpe_label() is what the model
+    trains on (return per unit of the event's own ex-ante vol) and
+    portfolio_sharpe_table() is what it is judged on. These tests pin both
+    halves plus the seam between them."""
+
+    def test_sharpe_label_divides_by_vol_and_floors_the_denominator(self):
+        df = pd.DataFrame({
+            rm.LABEL_COL: [0.20, 0.20, 0.20, 0.20],
+            # 0.40 and 0.80 are ordinary; 0.01 is below SHARPE_VOL_FLOOR and
+            # must be clipped UP to it, not used as-is.
+            rm.SHARPE_VOL_COL: [0.40, 0.80, 0.01, np.nan],
+        })
+        out = rm.sharpe_label(df)
+        assert out.iloc[0] == pytest.approx(0.20 / 0.40)
+        assert out.iloc[1] == pytest.approx(0.20 / 0.80)
+        assert out.iloc[2] == pytest.approx(0.20 / rm.SHARPE_VOL_FLOOR)
+        # Missing vol must NOT fall back to the raw return: that would feed
+        # the fit exactly the unadjusted rows this objective exists to
+        # discount. NaN drops the row from the sharpe fit instead.
+        assert pd.isna(out.iloc[3])
+
+    def test_sharpe_label_reranks_a_big_move_below_a_quiet_one(self):
+        """The whole point. Raw return ranks the wild name first; the Sharpe
+        label ranks the quiet one first."""
+        df = pd.DataFrame({
+            rm.LABEL_COL: [0.40, 0.20],
+            rm.SHARPE_VOL_COL: [2.00, 0.40],
+        })
+        raw = df[rm.LABEL_COL]
+        adj = rm.sharpe_label(df)
+        assert raw.idxmax() == 0          # big move on the wild name
+        assert adj.idxmax() == 1          # better return per unit of risk
+
+    def test_fit_and_validate_emits_oof_sharpe_and_a_deployment_model(self):
+        df = make_synthetic_dataset(n=900, seed=31, mode="planted", signal_strength=0.5)
+        result = rm.fit_and_validate(
+            df, lgbm_params=FAST_LGBM_PARAMS, run_shap_interactions=False, n_shuffle_seeds=5,
+        )
+        assert "oof_sharpe" in result.oof_scores.columns
+        assert result.oof_scores["oof_sharpe"].notna().any()
+        assert "sharpe" in result.models and result.models["sharpe"] is not None
+        assert "sharpe" in set(result.fold_metrics["model"])
+        assert result.config["sharpe_vol_col"] == rm.SHARPE_VOL_COL
+        assert result.config["sharpe_vol_floor"] == rm.SHARPE_VOL_FLOOR
+
+    def test_sharpe_model_is_skipped_not_faked_when_vol_is_all_missing(self, caplog):
+        """No vol column values means no risk-adjusted target. The fold must
+        emit NaN and say so, never a constant -- a constant would tie every
+        row and read as "no edge" rather than "never fit"."""
+        df = make_synthetic_dataset(n=900, seed=32, mode="planted", signal_strength=0.5)
+        df[rm.SHARPE_VOL_COL] = np.nan
+        with caplog.at_level(logging.WARNING):
+            result = rm.fit_and_validate(
+                df, lgbm_params=FAST_LGBM_PARAMS, run_shap_interactions=False, n_shuffle_seeds=5,
+            )
+        assert result.oof_scores["oof_sharpe"].isna().all()
+        assert result.models["sharpe"] is None
+        assert any("sharpe model is NOT fit" in r.message for r in caplog.records)
+
+
+class TestPortfolioSharpeTable:
+    @staticmethod
+    def _oof(period_returns_by_rank: dict[int, list[float]], horizon: int = 63) -> pd.DataFrame:
+        """Build an OOF frame whose top-scored row in each period carries a
+        chosen label, so the resulting period return is exactly predictable."""
+        rows = []
+        for period, labels in period_returns_by_rank.items():
+            for j, lab in enumerate(labels):
+                rows.append({
+                    "entry_idx": period * horizon,
+                    rm.LABEL_COL: lab,
+                    # descending score, so nlargest(1) always takes labels[0]
+                    "s": float(len(labels) - j),
+                })
+        return pd.DataFrame(rows)
+
+    def test_top_n_book_return_and_annualization(self):
+        # Three periods; top-1 pick returns +10%, -5%, +10%.
+        oof = self._oof({0: [0.10, -0.99], 1: [-0.05, -0.99], 2: [0.10, -0.99]})
+        out = rm.portfolio_sharpe_table(oof, ["s"], top_ns=(1,))
+        row = out.iloc[0]
+        assert row["n_periods"] == 3
+        arr = np.array([0.10, -0.05, 0.10])
+        expected = arr.mean() / arr.std(ddof=1) * np.sqrt(rm.TRADING_DAYS_PER_YEAR / rm.PRIMARY_HORIZON)
+        assert row["mean_period_return"] == pytest.approx(arr.mean())
+        assert row["sharpe"] == pytest.approx(expected)
+        assert row["hit_rate"] == pytest.approx(2 / 3)
+
+    def test_periods_are_non_overlapping(self):
+        """Two events one trading day apart land in ONE period, not two.
+        Overlapping periods double-count a price path and inflate Sharpe."""
+        oof = pd.DataFrame({
+            "entry_idx": [0, 1, 200],
+            rm.LABEL_COL: [0.1, 0.2, 0.3],
+            "s": [3.0, 2.0, 1.0],
+        })
+        out = rm.portfolio_sharpe_table(oof, ["s"], top_ns=(5,))
+        assert out.iloc[0]["n_periods"] == 2
+
+    def test_sharpe_is_nan_not_zero_on_a_single_period(self):
+        oof = self._oof({0: [0.10, 0.05]})
+        out = rm.portfolio_sharpe_table(oof, ["s"], top_ns=(1,))
+        assert np.isnan(out.iloc[0]["sharpe"])
+        assert out.iloc[0]["n_periods"] == 1
+
+    def test_a_smaller_book_than_n_takes_what_it_has(self):
+        oof = self._oof({0: [0.10], 1: [0.20], 2: [0.30]})
+        out = rm.portfolio_sharpe_table(oof, ["s"], top_ns=(50,))
+        assert out.iloc[0]["n_periods"] == 3
+        assert out.iloc[0]["mean_period_return"] == pytest.approx(0.20)
+
+    def test_missing_score_column_is_skipped_not_fatal(self, caplog):
+        oof = self._oof({0: [0.1], 1: [0.2]})
+        with caplog.at_level(logging.WARNING):
+            out = rm.portfolio_sharpe_table(oof, ["s", "not_a_column"], top_ns=(1,))
+        assert set(out["score"]) == {"s"}
+        assert any("not_a_column" in r.message for r in caplog.records)
+
+    def test_missing_required_column_raises(self):
+        with pytest.raises(ValueError, match="entry_idx"):
+            rm.portfolio_sharpe_table(pd.DataFrame({rm.LABEL_COL: [0.1]}), ["s"])
+
+    def test_result_carries_the_table_and_covers_baselines(self):
+        df = make_synthetic_dataset(n=900, seed=33, mode="planted", signal_strength=0.5)
+        result = rm.fit_and_validate(
+            df, lgbm_params=FAST_LGBM_PARAMS, run_shap_interactions=False, n_shuffle_seeds=5,
+        )
+        ps = result.portfolio_sharpe
+        assert not ps.empty
+        scored = set(ps["score"])
+        assert {"oof_sharpe", "oof_regressor", "oof_tail_classifier"} <= scored
+        # Baselines are measured on the same axis, so the comparison is
+        # like-for-like rather than model-only.
+        assert {"ten_pct_owner", "conviction_score"} <= scored
+        assert set(ps["n"]) == set(rm.SHARPE_TOP_NS)
