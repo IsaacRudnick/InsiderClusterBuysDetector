@@ -34,6 +34,22 @@ DEFAULT_SCORE_COL = "oof_tail_classifier"
 SCORES_DIR = "research_data"
 SCORES_GLOB = "oof_scores*.parquet"
 
+# How close two candidates' mtimes may be before 'latest' refuses to pick.
+#
+# This is not a hypothetical. out/backtest_20260812_234954 ran with
+# model_scores='latest' against four oof_scores_objsweep_thresh_*.parquet
+# files written 40 MILLISECONDS apart by one sweep script. max(mtime) picked
+# one of the four essentially at random -- it landed on thresh_0.20, the
+# variant that sweep had already found worse than thresh_0.05 -- and the
+# config recorded only the string 'latest', so nothing in the output
+# directory showed which model the 64-strategy grid had actually used.
+#
+# One second is far longer than the sub-millisecond spread a batch writer
+# produces and far shorter than the gap between two deliberate fit runs, so
+# it separates "the same job wrote these" from "I fit a new model" without
+# needing either process to cooperate.
+AMBIGUOUS_MTIME_WINDOW_S = 1.0
+
 
 def resolve_model_scores_path(spec: str) -> str | None:
     """Turn a prompt answer into a path, or None for 'do not attach'.
@@ -49,6 +65,15 @@ def resolve_model_scores_path(spec: str) -> str | None:
     a strategy actually needs scores and none were found, which keeps the
     "you asked for model ranking but have no model" error where it can name
     the offending strategies.
+
+    'latest' RAISES, however, when the newest candidate is within
+    AMBIGUOUS_MTIME_WINDOW_S of another one. A tie there means several files
+    were written by the same batch job and max(mtime) is choosing between
+    them arbitrarily -- silently deciding which model an entire backtest grid
+    ranks on. That is worth a hard stop with the candidate list in the
+    message, not a warning that scrolls past. Pass an explicit path (or
+    `run_research.py --oof-path-out`, which hands over the file it just fit)
+    to resolve it.
     """
     spec = (spec or "").strip()
     if not spec:
@@ -66,8 +91,31 @@ def resolve_model_scores_path(spec: str) -> str | None:
             SCORES_GLOB, SCORES_DIR,
         )
         return None
-    best = max(matches, key=os.path.getmtime)
-    log.info("model scores 'latest' resolved to %s", best)
+
+    by_mtime = sorted(matches, key=os.path.getmtime, reverse=True)
+    best = by_mtime[0]
+    best_mtime = os.path.getmtime(best)
+    tied = [
+        p for p in by_mtime[1:]
+        if abs(best_mtime - os.path.getmtime(p)) <= AMBIGUOUS_MTIME_WINDOW_S
+    ]
+    if tied:
+        raise SystemExit(
+            f"model scores 'latest' is ambiguous: {len(tied) + 1} files in "
+            f"{SCORES_DIR}/ share a modification time within "
+            f"{AMBIGUOUS_MTIME_WINDOW_S}s, so picking the newest would choose "
+            f"between them arbitrarily and silently decide which model this run "
+            f"ranks on.\n"
+            f"  Tied candidates: {', '.join(os.path.basename(p) for p in [best] + tied)}\n"
+            f"Set BT_MODEL_SCORES to the exact parquet you mean, or run "
+            f"`python run_research.py --fit-model --oof-path-out <file>` and pass "
+            f"the path it writes."
+        )
+
+    log.info(
+        "model scores 'latest' resolved to %s (newest of %d candidate(s): %s)",
+        best, len(matches), ", ".join(os.path.basename(p) for p in by_mtime),
+    )
     return best
 
 

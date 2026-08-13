@@ -667,3 +667,69 @@ class TestFitProductionNeverLiveGuard:
             ])
         produced = [f for f in os.listdir(tmp_path) if f.startswith("production_model_")]
         assert produced == []
+
+
+# ---------------------------------------------------------------------------
+# 7. --oof-path-out: the seam backtest.bat uses to hand the model it just fit
+#    straight to backtest.py, instead of letting BT_MODEL_SCORES='latest'
+#    re-resolve it by mtime (see backtest/model_scores.py's ambiguity guard).
+# ---------------------------------------------------------------------------
+class TestOofPathOut:
+    def test_fit_model_writes_the_path_it_actually_saved(self, tmp_path, monkeypatch):
+        df = make_synthetic_research_df(n=260, seed=17)
+        ds_path = os.path.join(str(tmp_path), "research_seed_260rows_20200101.parquet")
+        df.to_parquet(ds_path, index=False)
+
+        ptr = os.path.join(str(tmp_path), "ptr.txt")
+        rc = rr.main([
+            "--fit-model", "--out-dir", str(tmp_path), "--dataset-path", ds_path,
+            "--tag", "ptrtest", "--n-folds", "3", "--min-fold-train-rows", "15",
+            "--n-shuffle-seeds", "3", "--no-shap-interactions",
+            "--oof-path-out", ptr,
+        ])
+        assert rc == 0
+        assert os.path.exists(ptr)
+
+        written = open(ptr, encoding="utf-8").read().strip()
+        # Absolute, because backtest.bat reads this in one process and uses it
+        # in another; a relative path is only correct while they share a cwd.
+        assert os.path.isabs(written)
+        assert os.path.exists(written), "the pointer must name a parquet that exists"
+        assert "oof_scores_ptrtest_" in os.path.basename(written)
+        back = pd.read_parquet(written)
+        assert len(back) > 0
+        # The whole point: the pointer names THIS run's output, so the file it
+        # names must carry the sharpe column this build of the model emits.
+        assert "oof_sharpe" in back.columns
+
+    def test_no_pointer_written_when_the_fit_stage_did_not_run(self, tmp_path, monkeypatch):
+        """--build-dataset alone produces no scores, so there is nothing to
+        point at. Writing a stale or empty pointer would be worse than writing
+        none: backtest.bat would hand backtest.py a path to a model this run
+        never fit."""
+        monkeypatch.setattr(
+            rr, "run_build_dataset_stage",
+            lambda **kw: make_synthetic_research_df(n=60, seed=3),
+        )
+        ptr = os.path.join(str(tmp_path), "ptr.txt")
+        rc = rr.main([
+            "--build-dataset", "--out-dir", str(tmp_path), "--months", "1",
+            "--oof-path-out", ptr,
+        ])
+        assert rc == 0
+        assert not os.path.exists(ptr)
+
+    def test_dry_run_writes_no_pointer(self, tmp_path):
+        ptr = os.path.join(str(tmp_path), "ptr.txt")
+        rc = rr.main([
+            "--fit-model", "--dry-run", "--out-dir", str(tmp_path),
+            "--oof-path-out", ptr,
+        ])
+        assert rc == 0
+        assert not os.path.exists(ptr)
+
+    def test_pointer_parent_directory_is_created(self, tmp_path):
+        nested = os.path.join(str(tmp_path), "does", "not", "exist", "ptr.txt")
+        rr._write_oof_path_file(nested, os.path.join(str(tmp_path), "some_scores.parquet"))
+        assert os.path.exists(nested)
+        assert os.path.isabs(open(nested, encoding="utf-8").read().strip())

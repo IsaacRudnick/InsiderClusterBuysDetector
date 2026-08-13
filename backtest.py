@@ -270,6 +270,11 @@ def main() -> None:
     needs_scores = [s.name for s in chosen_strategies
                     if s.rank_fn is strategies.rank_by_model_score]
     scores_path = model_scores.resolve_model_scores_path(cfg["model_scores"])
+    # Record what 'latest' (or an explicit path) actually resolved to, not just
+    # the spec string. config.json used to store only "latest", so a finished
+    # run gave no way to tell which of several score files it had ranked on.
+    cfg["model_scores_resolved"] = scores_path
+    cfg["model_scores_column"] = model_scores.DEFAULT_SCORE_COL if scores_path else None
     if scores_path:
         scores = model_scores.load_model_scores(scores_path)
         state_builder.set_model_scores(scores)
@@ -284,11 +289,14 @@ def main() -> None:
         sc_tickers = {t for t, _ in scores}
         overlap = len(ev_tickers & sc_tickers)
         sc_days = [d for _, d in scores]
+        sc_first, sc_last = min(sc_days), max(sc_days)
+        cfg["model_scores_first_day"] = sc_first.isoformat()
+        cfg["model_scores_last_day"] = sc_last.isoformat()
         log.info(
             "Model-score universe: %d/%d run tickers have scores (%.1f%%); "
             "score dates %s..%s",
             overlap, len(ev_tickers), 100.0 * overlap / max(len(ev_tickers), 1),
-            min(sc_days), max(sc_days),
+            sc_first, sc_last,
         )
         if overlap == 0:
             log.warning(
@@ -296,6 +304,31 @@ def main() -> None:
                 "strategy will rank alphabetically by ticker. Check that the "
                 "score file matches this run's window and ticker set."
             )
+        # Coverage gap check. rank_by_model_score maps an unscored candidate to
+        # -inf, which sorts it LAST but leaves it eligible, so a day outside the
+        # score window still fills its book -- by _rank_capacity_order's ticker
+        # tie-break, i.e. alphabetically. In backtest_20260812_234954 that was
+        # 17 months of a 96-month window and about a sixth of every
+        # model_ranked_* strategy's lots. It is invisible in the output unless
+        # something says so here.
+        if needs_scores:
+            uncovered_before = (sc_first - win_start).days
+            uncovered_after = (as_of - sc_last).days
+            if uncovered_before > 0 or uncovered_after > 0:
+                total_days = max((as_of - win_start).days, 1)
+                log.warning(
+                    "MODEL-SCORE COVERAGE GAP: run window is %s..%s but scores only "
+                    "span %s..%s -- %d day(s) before and %d day(s) after are unscored "
+                    "(%.1f%% of the window). Strategies %s stay ELIGIBLE on those days "
+                    "and rank alphabetically by ticker there, because "
+                    "rank_by_model_score sorts an unscored candidate last rather than "
+                    "excluding it. Clamp BT_MONTHS/BT_AS_OF to the score window, or "
+                    "read those strategies' early lots as unranked.",
+                    win_start, as_of, sc_first, sc_last,
+                    max(uncovered_before, 0), max(uncovered_after, 0),
+                    100.0 * (max(uncovered_before, 0) + max(uncovered_after, 0)) / total_days,
+                    needs_scores,
+                )
     elif needs_scores:
         raise SystemExit(
             f"Strategies {needs_scores} rank by model score, but no score file "
