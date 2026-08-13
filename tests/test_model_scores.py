@@ -40,7 +40,13 @@ if REPO_ROOT not in sys.path:
 
 import ipo_lookup  # noqa: E402
 from backtest import engine  # noqa: E402
-from backtest.model_scores import DEFAULT_SCORE_COL, load_model_scores  # noqa: E402
+from backtest import model_scores as model_scores_mod  # noqa: E402
+from backtest.model_scores import (  # noqa: E402
+    AMBIGUOUS_MTIME_WINDOW_S,
+    DEFAULT_SCORE_COL,
+    load_model_scores,
+    resolve_model_scores_path,
+)
 from backtest.state import DailyStateBuilder, WINDOW_DAYS  # noqa: E402
 from backtest.strategies import ExitMethod, Strategy, rank_by_model_score  # noqa: E402
 
@@ -364,3 +370,85 @@ def test_loader_respects_explicit_score_column(tmp_path):
 
     scores = load_model_scores(str(path), score_col="oof_regressor")
     assert scores == {("AAA", date(2024, 1, 2)): pytest.approx(1.5)}
+
+
+# ---------------------------------------------------------------------------
+# resolve_model_scores_path: the 'latest' tiebreak
+#
+# out/backtest_20260812_234954 ran with model_scores='latest' against four
+# oof_scores_objsweep_thresh_*.parquet files written 40ms apart by one sweep
+# script. max(mtime) chose between them arbitrarily, landed on the threshold
+# that sweep had already rejected, and config.json recorded only the string
+# 'latest' -- so a 64-strategy grid ranked on a model nothing could name
+# after the fact. These tests pin the guard added for that.
+# ---------------------------------------------------------------------------
+def _touch_scores(dirpath, name: str, mtime: float) -> str:
+    path = os.path.join(dirpath, name)
+    pd.DataFrame({
+        "ticker": ["AAA"], "event_day": [date(2024, 1, 2)], DEFAULT_SCORE_COL: [0.5],
+    }).to_parquet(path, index=False)
+    os.utime(path, (mtime, mtime))
+    return path
+
+
+def test_latest_picks_the_newest_when_mtimes_are_clearly_separated(tmp_path, monkeypatch, caplog):
+    monkeypatch.setattr(model_scores_mod, "SCORES_DIR", str(tmp_path))
+    _touch_scores(tmp_path, "oof_scores_old.parquet", 1_000_000.0)
+    newest = _touch_scores(tmp_path, "oof_scores_new.parquet", 1_000_500.0)
+
+    with caplog.at_level(logging.INFO):
+        resolved = resolve_model_scores_path("latest")
+
+    assert resolved == newest
+    # The log must name every candidate it chose over, not just the winner --
+    # that list is what makes a wrong pick noticeable after the fact.
+    logged = " ".join(r.getMessage() for r in caplog.records)
+    assert "oof_scores_new.parquet" in logged
+    assert "oof_scores_old.parquet" in logged
+
+
+def test_latest_raises_when_two_files_share_an_mtime(tmp_path, monkeypatch):
+    """The exact backtest_20260812_234954 shape: one batch job writes several
+    score files milliseconds apart."""
+    monkeypatch.setattr(model_scores_mod, "SCORES_DIR", str(tmp_path))
+    base = 1_000_000.0
+    _touch_scores(tmp_path, "oof_scores_thresh_0.05.parquet", base)
+    _touch_scores(tmp_path, "oof_scores_thresh_0.20.parquet", base + 0.04)
+
+    with pytest.raises(SystemExit) as exc:
+        resolve_model_scores_path("latest")
+
+    msg = str(exc.value)
+    assert "ambiguous" in msg
+    # Must name the tied files -- an error that says only "ambiguous" leaves
+    # the reader exactly where they started.
+    assert "oof_scores_thresh_0.05.parquet" in msg
+    assert "oof_scores_thresh_0.20.parquet" in msg
+    assert "BT_MODEL_SCORES" in msg
+
+
+def test_ambiguity_window_boundary_is_not_tripped_by_a_clear_gap(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_scores_mod, "SCORES_DIR", str(tmp_path))
+    base = 1_000_000.0
+    _touch_scores(tmp_path, "oof_scores_a.parquet", base)
+    newest = _touch_scores(tmp_path, "oof_scores_b.parquet", base + AMBIGUOUS_MTIME_WINDOW_S * 10)
+    assert resolve_model_scores_path("latest") == newest
+
+
+def test_explicit_path_never_consults_the_glob(tmp_path, monkeypatch):
+    """An explicit path is the documented escape hatch out of the ambiguity
+    error, so it must not be able to trip it."""
+    monkeypatch.setattr(model_scores_mod, "SCORES_DIR", str(tmp_path))
+    base = 1_000_000.0
+    a = _touch_scores(tmp_path, "oof_scores_a.parquet", base)
+    _touch_scores(tmp_path, "oof_scores_b.parquet", base)  # tied with a
+    assert resolve_model_scores_path(a) == a
+
+
+def test_blank_spec_and_no_matches_still_return_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(model_scores_mod, "SCORES_DIR", str(tmp_path))
+    assert resolve_model_scores_path("") is None
+    assert resolve_model_scores_path("   ") is None
+    # 'latest' with nothing on disk stays a warning, not a failure: a run
+    # that selected no model-ranked strategy must not die here.
+    assert resolve_model_scores_path("latest") is None

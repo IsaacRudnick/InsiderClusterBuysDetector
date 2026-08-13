@@ -9,7 +9,10 @@
   research_data/oof_scores_<tag_><YYYYMMDD>.parquet
       Out-of-fold ranking-model scores, built by research.model.fit_and_validate's
       purged walk-forward CV. backtest/model_scores.py reads this file's
-      oof_tail_classifier column to rank model_ranked_* strategies.
+      oof_tail_classifier column to rank model_ranked_* strategies. The file
+      also carries oof_regressor, oof_classifier and oof_sharpe (the
+      risk-adjusted objective -- see research/model.py's SHARPE_VOL_COL), any
+      of which a caller can select instead.
 
 Neither artifact previously had a command-line entrypoint -- both were built
 ad hoc in an interactive session, which made the pipeline unreproducible.
@@ -20,6 +23,11 @@ back to back:
     python run_research.py --build-dataset   # writes research_*.parquet
     python run_research.py --fit-model        # reads the latest research_*.parquet, writes oof_scores_*.parquet
     python run_research.py                    # both, in order (same as --all)
+
+backtest.bat runs this script before backtest.py so a grid always ranks on a
+model fit in the same invocation, and passes --oof-path-out so the backtest
+receives the exact parquet this run wrote rather than re-resolving 'latest'
+by mtime.
 
 A third stage produces the artifact the LIVE screener needs (see
 research/live_score.py), separate from the two above because it is a
@@ -178,6 +186,18 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--no-shap-interactions", action="store_true",
         help="Skip the ten-percent-owner SHAP interaction analysis (oof_scores is unaffected either way; saves fit time).",
     )
+    p.add_argument(
+        "--oof-path-out", default=None,
+        help=(
+            "Write the absolute path of the oof_scores parquet this run produced to "
+            "FILE (one line, no trailing newline decoration). backtest.bat uses this "
+            "to hand the exact file it just fit straight to backtest.py via "
+            "BT_MODEL_SCORES, instead of letting BT_MODEL_SCORES='latest' re-resolve "
+            "it by mtime -- a glob whose tiebreak is arbitrary when several score "
+            "files share a timestamp (see backtest/model_scores.py). Nothing is "
+            "written unless --fit-model actually ran and produced scores."
+        ),
+    )
     p.add_argument("--verbose", action="store_true", help="DEBUG-level logging.")
     return p
 
@@ -208,6 +228,27 @@ def _parse_as_of(raw: str | None) -> date:
         return datetime.strptime(raw, "%Y-%m-%d").date()
     except ValueError:
         raise SystemExit(f"Invalid --as-of {raw!r}; expected YYYY-MM-DD") from None
+
+
+def _write_oof_path_file(dest: str, oof_path: str) -> None:
+    """Write `oof_path` to `dest` as a single absolute path.
+
+    Absolute, because backtest.bat reads this back and hands it to
+    backtest.py, and a relative path is only correct if both processes share
+    a working directory. They do today; a caller who moves either one should
+    not silently get a path that resolves to nothing.
+
+    Written last in the fit stage, after save_oof_scores has already
+    os.replace()d the parquet into place, so this file never points at a
+    parquet that does not exist yet.
+    """
+    resolved = os.path.abspath(oof_path)
+    parent = os.path.dirname(os.path.abspath(dest))
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+    with open(dest, "w", encoding="utf-8") as fh:
+        fh.write(resolved)
+    log.info("fit-model: wrote OOF score path pointer %s -> %s", dest, resolved)
 
 
 def _resolve_latest(out_dir: str, pattern: str) -> str | None:
@@ -613,8 +654,15 @@ def main(argv: list[str] | None = None) -> int:
                 min_fold_train_rows=args.min_fold_train_rows, n_shuffle_seeds=args.n_shuffle_seeds,
                 run_shap_interactions=not args.no_shap_interactions,
             )
-            rm.save_oof_scores(result.oof_scores, out_dir=args.out_dir, tag=args.tag)
+            oof_path = rm.save_oof_scores(result.oof_scores, out_dir=args.out_dir, tag=args.tag)
             result_for_reuse = result
+            if not result.portfolio_sharpe.empty:
+                log.info(
+                    "fit-model: portfolio Sharpe (OOF, top-N equal weight) --\n%s",
+                    result.portfolio_sharpe.head(10).to_string(index=False),
+                )
+            if args.oof_path_out:
+                _write_oof_path_file(args.oof_path_out, oof_path)
 
     if do_fit_production:
         if args.dry_run:
