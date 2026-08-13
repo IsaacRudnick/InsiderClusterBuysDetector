@@ -567,8 +567,492 @@ Every synthetic test frame built volume as float, so 19 tests passed while
 the real build crashed. `tests/test_splits.py::TestIntegerVolumeColumn`
 now covers the real dtype.
 
+## Review of `out/backtest_20260812_234954` (2026-08-13)
+
+The first full 64-strategy grid since the ticker-reuse fix. 96 months,
+2018-08-12 .. 2026-08-12, `fit_signal: true`, `drop_ticker_reuse: true`,
+8,950 events dropped for reuse. Three things came out of it: the run's
+model-ranked arm is not measuring what it claims, the shipped ranking score
+is actively harmful, and the one objective that does work is not a return
+objective.
+
+### 1. The run scored itself with the wrong model, chosen by mtime
+
+`config.json` has `"model_scores": "latest"`. `resolve_model_scores_path`
+globs `oof_scores*.parquet` and takes `max(mtime)`. The four objective-sweep
+files were written **within 40 ms of each other**, so the winner is
+effectively arbitrary. It resolved to
+`oof_scores_objsweep_thresh_0.20_20260809.parquet` -- the TAIL_THRESH 0.20
+variant that the objective sweep had already found worse than 0.05 on four
+of five dimensions.
+
+Worse, the runs this grid gets compared against (`backtest_20260809_232548`,
+`backtest_20260810_000228`) pointed at `oof_t005_asdefault_20260809.parquet`
+explicitly. That filename does not match `oof_scores*.parquet` at all, so
+`latest` could never have picked it. **The model silently changed between
+the runs being compared.** Do not read the 8/12 model-ranked numbers as a
+continuation of the 8/9-8/10 ones.
+
+Fix: make `latest` refuse to guess when several candidates share a mtime
+within a second, and record the resolved path plus its score column in
+`config.json` rather than the spec string.
+
+### 2. A fifth of the window had no scores at all
+
+OOF scores cover **2020-01-02 .. 2026-05-06**. The backtest window is
+2018-08-12 .. 2026-08-12. `rank_by_model_score` maps an unscored candidate
+to `-inf`, which sorts it last but leaves it **eligible**, so in the 17
+unscored months every candidate ties at `-inf` and `_rank_capacity_order`'s
+ticker tie-break picks the book. The last three months forward-fill stale
+scores. Measured share of lots in the blind region:
+
+| strategy | pre-2020 lots | scored lots | stale-ff lots | pre-2020 mean ret |
+|---|---|---|---|---|
+| model_ranked_n05_hold63 | 64 (17%) | 311 | 10 | +1.98% |
+| model_ranked_n10_hold63 | 128 (17%) | 622 | 18 | **-4.93%** |
+| model_ranked_n10_hold21 | 405 (19%) | 1,685 | 61 | +4.69% |
+| model_ranked_n25_hold63 | 346 (16%) | 1,704 | 54 | +0.30% |
+
+So roughly a sixth of every model-ranked strategy is an alphabetical
+selector wearing the model's name. Either clamp the backtest window to the
+score window, or gate unscored candidates out instead of sorting them last.
+
+### 3. The leaderboard is three trades deep
+
+Nothing in 442 rows clears significance. Best `t_alpha` is **1.65**
+(`thr_gt_p11`, 391 lots, 10% exposure) -- **down from the 1.91 the same
+strategy posted a year of work ago**. The model-ranked ladder is not
+monotone in slot count and straddles zero: n05 +0.65, n10 +0.36, n15 +0.14,
+n20 -0.12, n25 -0.17, n30 -0.35, n40 -0.03, n50 +0.02, n60 -0.44, n75 -0.42,
+n100 -0.24. That shape is noise, not a capacity curve.
+
+P&L concentration, per `trades_*_90d.csv`:
+
+| strategy | top-1 lot | top-10 lots | P&L ex. top 1% of lots | worst year share |
+|---|---|---|---|---|
+| model_ranked_n05_hold63 | 26.1% | **92.3%** | +53% | 2020 = 50.4% |
+| model_ranked_n10_hold63 | 15.8% | **92.7%** | +28% | **2020 = 93.8%** |
+| model_ranked_n10_hold21 | 17.9% | 71.9% | **-12.3%** | 2025 = 39.1% |
+| model_ranked_n25_hold63 | 12.1% | 65.9% | **-6.8%** | 2020 = 78.6% |
+| all_clusters_hold63 (baseline) | 10.4% | 44.0% | +15.0% | 2020 = 57.5% |
+| thr_gt_p11 (best t_alpha) | 15.9% | 86.0% | +61% | 2024 = 51.8% |
+
+Two of the four model-ranked strategies **lose money once the top 1% of
+lots is removed**, and the unranked baseline is less concentrated than any
+of them. `model_ranked_n10_hold63` earns 93.8% of its lifetime P&L in 2020
+and is negative in 2021 and 2023. This is the same lottery-ticket shape as
+[[tail-model-is-a-lottery-ticket]], now visible at portfolio level.
+
+### 4. Why the score fails: it is a volatility factor with the sign flipped
+
+Spearman of `oof_tail_classifier` against its own inputs:
+`x_vol_63_ann` **+0.689**, `x_vol_21_ann` +0.666, `x_drawdown_252` -0.623,
+`x_entry_vs_insider_vwap` +0.436. The score is two-thirds a realized-vol
+factor. But vol's own relationship to forward return is *negative*
+(`x_vol_63_ann` IC -0.060, negative in 7 of 9 years), and
+`x_entry_vs_insider_vwap` is the strongest single feature in the dataset at
+IC **-0.109, negative in 8 of 9 years**. The tail objective inverts both.
+
+Result, measured against the compounding-correct label
+`log(1+fwd_63) - log(1+spy_63)`:
+
+| decile of `oof_tail_classifier` | 0 | 3 | 5 | 7 | 8 | 9 |
+|---|---|---|---|---|---|---|
+| log-excess vs SPY | -0.030 | -0.010 | -0.042 | **-0.064** | **-0.064** | -0.012 |
+| P(adj_63 < -30%) | 0.02 | 0.04 | 0.12 | 0.17 | 0.17 | 0.16 |
+
+Pooled IC **-0.053**, positive in **1 of 7 years** (2020). Deciles 4-8 are
+all worse than not selecting at all. Screening out its *bottom* deciles
+makes results worse in 5 of 7 years. Only decile 9 recovers, and only on the
+mean -- its median is still negative. **Ranking by this score selects for
+blowup risk.** Every `model_ranked_*` strategy in this grid did exactly that.
+
+The unused `oof_classifier` (P(adj_63 > 0)) is strictly better on the same
+data: IC +0.029, positive in 5 of 7 years. It was never wired in.
+
+### 5. The population itself is negative-alpha once compounding is honest
+
+`adj_63` mean is **+1.02%**, which is the number every prior note quotes.
+The same events in log space give **-3.49%** vs SPY over 63 days, median
+-2.40%, and **-7.99% at 126 days**. The positive arithmetic mean is entirely
+the right tail; an equal-weight portfolio does not collect it.
+
+**No decile of any ranking tested reaches positive log-excess.** The best
+cell found anywhere in this analysis is -0.012. Read every CAGR in
+`summary.csv` against this: the strategies that beat SPY do it with beta
+(0.73-0.99 on the model-ranked arm) plus a handful of lots, not selection.
+
+### 6. What does work: predict the loss, not the return
+
+Expanding-window out-of-sample (train on everything ending 95 calendar days
+before the test year starts), same 59 `x_` features, LightGBM, four
+objectives:
+
+| objective | IC vs log-excess | years positive | drop-bottom-3 lift |
+|---|---|---|---|
+| rank(log-excess) | +0.014 | 5/6 | +0.011 |
+| P(log-excess > 0) | -0.001 | 5/6 | +0.007 |
+| huber on winsorized log-excess | +0.007 | 5/6 | +0.010 |
+| **P(adj_63 > -0.30)** | **+0.092** | **6/6** | **+0.018** |
+| shipped `oof_tail_classifier` | -0.053 | 1/7 | -0.008 |
+
+Every return-shaped objective collapses in 2021 (IC about -0.22 in all
+three). The downside-avoidance objective does not. Over the full 7-year
+sample it holds IC +0.063 at 6/7 years positive, and it is **stable**:
+across 4 seeds x 3 thresholds (-0.20/-0.30/-0.40) IC stays in
+0.050 .. 0.066 and the drop-bottom-3 lift in +0.014 .. +0.020. Compare that
+to the refit instability in [[refit-instability-decides-the-headline]].
+
+Its decile structure is monotone in exactly the thing it was asked to
+predict: P(adj_63 < -30%) runs 0.27, 0.18, 0.13, 0.13, 0.09, 0.08, 0.05,
+0.05, 0.03, **0.02**. Top importances are `x_entry_vs_insider_vwap`,
+`x_log_adv20`, `x_vol_63_ann`, `x_price_to_sma200`, `x_vol_21_ann`.
+
+An unfitted, sign-constrained rank composite of eight features
+(`x_entry_vs_insider_vwap`-, `x_vol_63_ann`-, `x_n_ten_pct`-,
+`x_issuer_n_prior_clusters`+, `x_window_span_days`+,
+`x_n_distinct_tx_dates`+, `x_owner_prior_buys_wmean`+, `x_drawdown_252`+)
+matches it: IC +0.102, 6 of 7 years positive, P(<-30%) 0.27 -> 0.02, and the
+lift scales correctly with horizon (+0.004 at 21d, +0.020 at 63d, +0.041 at
+126d), which is the signature of a real effect rather than a fitting
+artifact. Its signs were picked on this data, so treat it as an upper bound
+and the fitted model as the honest number -- but a hand composite with no
+parameters tying the tuned model is itself the finding.
+
+`x_n_ten_pct` and `x_ten_pct_value_share` are both negative in 8 of 9 years.
+`ten_percent_owner_gated` gates on the wrong sign, confirming
+[[ten-pct-owner-ranks-negative]] with cross-year evidence.
+
+**Survivorship cuts the right way for this conclusion.** The excluded third
+of tickers is concentrated in dead companies, which would land in the bottom
+deciles of a downside model. So the risk ranking is understated here, not
+overstated -- the one conclusion in this repo that bias makes *safer*. The
+level numbers stay upper bounds as always.
+
+### Verdict
+
+There is no better *return* model to be had from this feature set: four
+objectives, none reaches positive log-excess in any decile. There is a
+better *risk* model, it is stable, and it is not what the pipeline ships.
+The honest product is a downside filter over an equal-weight book, not a
+top-N ranker -- which is the portfolio shape
+[[edge-exists-only-where-it-cannot-be-measured]] already pointed at from the
+other direction.
+
+Ordered next steps:
+
+1. Make `latest` fail loudly on ambiguous mtimes; log the resolved path and
+   score column into `config.json`. One-line class of bug, invalidated a
+   64-strategy run.
+2. Gate unscored candidates out of `model_ranked_*` instead of sorting them
+   last, or clamp `BT_AS_OF`/months to the score window.
+3. Refit with objective `P(adj_63 > -0.30)`, publish as a separate score
+   column, and add `model_screened_*` strategies that use it as a **filter**
+   (drop bottom 3 deciles, equal-weight the rest) rather than a rank_fn.
+4. Report log-excess alongside `adj_63` everywhere. The arithmetic mean is
+   +1.02% and the compounding truth is -3.49%; every note written so far
+   quotes the flattering one.
+
+Scripts: `tmp/an*.py` under the session scratchpad (not committed).
+
+## backtest.bat now trains the model it backtests (2026-08-13)
+
+Training and backtesting were two commands with nothing tying them together.
+They are one command now, and the seam between them is explicit rather than
+inferred from the filesystem.
+
+```
+backtest.bat
+  1. run_research.py --all --months %BT_MONTHS% [--as-of ...]
+        --oof-path-out <tempfile>          rebuild dataset + refit model
+  2. backtest.py    with BT_MODEL_SCORES = the path stage 1 wrote
+```
+
+Three things this fixes, all of them failures the 8/12 run actually hit:
+
+- **The handoff is a path, not a glob.** `run_research.py --oof-path-out FILE`
+  writes the absolute path of the parquet it just saved; the batch file reads
+  it with `set /p` and exports `BT_MODEL_SCORES`. Stage 2 can no longer
+  re-resolve `latest` and land on a different model than stage 1 fit.
+- **One window for both stages.** `BT_MONTHS` is asked once, up front, and
+  passed to training and to the backtest. Previously `run_research.py`
+  defaulted to 96 months and `backtest.py` prompted with a default of 36, so
+  the two could silently disagree -- which is how a model scored 2020-2026
+  ended up ranking a 2018-2026 grid.
+- **`latest` refuses to guess.** `resolve_model_scores_path` now raises when
+  the newest candidate is within `AMBIGUOUS_MTIME_WINDOW_S` (1.0s) of
+  another, listing the tied files. The four `oof_scores_objsweep_thresh_*`
+  files are 40 ms apart, so a bare `BT_MODEL_SCORES=latest` against the
+  current `research_data/` now stops with an actionable message instead of
+  picking one at random. Explicit paths bypass the check entirely.
+
+`config.json` gained `model_scores_resolved`, `model_scores_column`,
+`model_scores_first_day` and `model_scores_last_day`, so a finished run
+records which model it ranked on. `backtest.py` also logs a MODEL-SCORE
+COVERAGE GAP warning naming the offending strategies when the run window
+extends past the score window in either direction.
+
+Escape hatches, since a full `--all` re-scrapes EDGAR and takes hours:
+
+| variable | effect |
+|---|---|
+| `BT_TRAIN=0` | skip stage 1, backtest against existing `BT_MODEL_SCORES` |
+| `BT_TRAIN_ARGS=--fit-model --events-from latest` | refit from the cached events parquet, minutes not hours |
+| `BT_MONTHS`, `BT_AS_OF` | pin the window for both stages |
+
+## The Sharpe objective
+
+`fit_and_validate` now fits a fourth model, `sharpe`, and emits `oof_sharpe`
+alongside the existing three OOF columns.
+
+Sharpe is a portfolio property -- mean over stdev of a return stream -- and
+this model scores one event at a time, so it cannot be a per-row loss. The
+translation has two halves and both are needed:
+
+1. **Train** on `sharpe_label()`: `adj_63` divided by the event's own
+   `x_vol_63_ann`, floored at `SHARPE_VOL_FLOOR = 0.10`. This is the direct
+   antidote to the failure in section 4 above -- a model fit on raw `adj_63`
+   is rewarded for finding big moves, big moves live in high-vol names, and
+   that is exactly how `tail_classifier` ended up +0.689 correlated with
+   `x_vol_63_ann` while ranking negatively against forward return. The ratio
+   removes the reward channel: +20% on a quiet name now outranks +40% on a
+   name twice as wild.
+2. **Judge** on `portfolio_sharpe_table()`: rebuild the equal-weight top-N
+   book each score would have held and measure its realized Sharpe.
+
+The vol column is an `x_` feature, so the denominator is point-in-time by
+construction and adds no information the model could not see at decision
+time. The floor clips 136 rows (1.3%) and sits below the 1st percentile
+(0.087) -- it catches stale/identical-close series, not genuinely quiet
+names. A row with no vol reading gets a NaN label and drops out of the
+sharpe fit only; it is deliberately NOT backfilled with the raw return,
+which would feed the fit the very rows the objective exists to discount. A
+fold with too few vol-labelled rows emits NaN and logs it, rather than a
+constant that would read as "no edge" instead of "never fit".
+
+`portfolio_sharpe_table` buckets `entry_idx` into **non-overlapping**
+`horizon`-day periods. Overlapping entries reuse the same price path across
+periods and inflate Sharpe; the bucketing costs sample size and buys a
+number that means what it says. It reports `n_periods` next to every figure
+for exactly that reason, and returns NaN rather than a finite value when
+fewer than two periods survive.
+
+### First measurement (8,810 OOF rows, groupE dataset, 27 periods)
+
+| score | n | Sharpe | stdev | max DD |
+|---|---|---|---|---|
+| oof_tail_classifier | 10 | **1.102** | 0.215 | -0.328 |
+| oof_regressor | 10 | 1.077 | 0.261 | -0.520 |
+| oof_sharpe | 5 | 0.974 | 0.250 | -0.497 |
+| oof_sharpe | 25 | 0.814 | 0.135 | -0.350 |
+| oof_sharpe | 50 | 0.641 | 0.113 | -0.338 |
+| oof_tail_classifier | 50 | 0.776 | 0.131 | -0.373 |
+| conviction_score | 25 | 0.161 | 0.096 | -0.239 |
+| ten_pct_owner | 50 | -0.011 | 0.108 | -0.556 |
+
+**The sharpe model does not win the headline Sharpe, and 27 periods cannot
+tell these apart anyway.** A gap of 0.1-0.3 in Sharpe on 27 observations is
+noise. What is visible and consistent is the shape: at every book size the
+sharpe model runs a LOWER stdev and a shallower drawdown than the tail
+classifier at the same N (at n=100, stdev 0.089 vs 0.114 and maxDD -0.319 vs
+-0.455). That is the objective doing what it was asked to do. Whether that
+converts into a better book is a question for the engine, not this table.
+
+All four models clear both hand-built baselines by a wide margin on this
+axis, which is the first time any score in this repo has separated from
+`conviction_score` on a risk-adjusted measure.
+
+Caveats that still apply, unchanged: these are `adj_63` levels on the
+priceable universe, so they are upper bounds per the survivorship section,
+and the table has no costs, no capacity cap and no cash leg -- it ranks
+scores, it does not size a strategy.
+
+## Does a ranking exist? Yes. Does it beat an ETF? No. (2026-08-13)
+
+An earlier version of these notes concluded there was no usable ranking, only
+a good/bad filter. **That conclusion was wrong**, and the reason it was wrong
+is worth recording: it came from reading pooled decile MEANS at a single
+63-day horizon. On a label with a 1,000% right tail the mean is noise. Four
+methodology fixes -- read MEDIANS, test 21 days, use a quantile objective,
+and measure rank correlation WITHIN monthly cohorts -- surface a ranking that
+was there the whole time.
+
+### The ranking that survives
+
+Quantile regression at alpha 0.4-0.5, 21-day horizon, expanding-window
+out-of-sample, evaluated on log-excess vs SPY:
+
+| decile | median excess | win rate |
+|---|---|---|
+| 0 (worst) | **-2.85%** | 43.0% |
+| 4 | -0.46% | 47.5% |
+| 9 (best) | **+0.09%** | 50.4% |
+
+Monotone in median (rank corr +0.93). Positive in **7 of 7** OOS years.
+Monthly-cohort IC +0.062, t=4.09, block bootstrap over months gives 95% CI
+[+0.031, +0.094], P(<=0) = 0.0000. Stable across 5 seeds.
+
+**It passes the volatility audit that killed the tail model.** Inside a vol
+quintile it keeps +0.034 of its +0.056, and it beats a pure low-vol ranker
+head to head (top decile +0.09% vs -0.38%). Every other candidate tested --
+63d, 126d and 252d downside models, some with much larger headline IC --
+FAILED exactly here: within-vol IC collapsed to zero or negative and a plain
+"sort by low volatility" matched or beat them. Those were the vol factor
+wearing a hat. Always run this audit before believing a new score.
+
+Two hard limits:
+
+- **No resolution at the top.** IC *within* the top decile is -0.0007. It
+  separates top-10% from bottom-10% reliably and cannot order the top 30
+  against each other.
+- **It is mostly price context, not insider quality.** Dropping the 12
+  price/momentum/vol features collapses it from 7/7 years to 4/7 and
+  vol-neutral IC to +0.001. Top drivers are `x_mom_63_skip5`,
+  `x_vol_21_ann`, `x_entry_vs_insider_vwap`, `x_price_to_sma200`.
+
+### Benchmark choice was a real error
+
+Insider clusters live in microcaps; the labels compare them to SPY. Over
+2018-08..2026-08 the size factor alone accounts for half the apparent
+underperformance:
+
+| ETF | CAGR | vs SPY |
+|---|---|---|
+| SPY | +15.16% | - |
+| RSP (EW S&P) | +11.82% | -3.3pp |
+| IWC (microcap) | +9.42% | -5.7pp |
+| IWM (smallcap) | +9.10% | -6.1pp |
+| XBI (biotech) | +6.88% | -8.3pp |
+
+Report both yardsticks, always. The universe-matched one (IWM/IWC) answers
+"does the insider signal add value"; SPY answers "would you have been better
+off in an index fund". Picking whichever flatters the result is benchmark
+shopping.
+
+### The ETF bar: not cleared, and the reason is instructive
+
+Best configuration found (sector-relative training label, see below), 10-name
+equal-weight book, non-overlapping 21-day periods, net of 20bps:
+
+| test | result |
+|---|---|
+| headline | **+7.98%/yr over SPY** |
+| p-value | **0.466** |
+| 95% CI | **[-13.4%, +29.3%]** |
+| beat SPY | 4 of 7 years |
+| drop 2025 | +7.98% -> **+0.06%** |
+| **seeds 0-4** | **+7.98, +0.81, +1.26, +6.72, +5.91** |
+
+**The headline is the random seed.** Nothing but the RNG start moves it
+tenfold. Seed 0 first reads as a triumph; seed 1 first reads as a failure.
+Any future ETF-beating claim from this repo must report the seed sweep and
+the leave-one-year-out table, or it is not a claim.
+
+Same instability elsewhere: adding two beta features moved the top-5 book
+from +2.33% to +15.86%/yr while moving top-10 the OTHER way (+4.70% ->
++1.74%). A real effect does not behave like that.
+
+**Roughly 40 model configurations were tried in this effort.** That count is
+itself the warning. Keep searching and something will clear +15%/yr; it will
+be seed 3 of test 47 and it will mean nothing. The six sector tests below
+were pre-registered before any result was seen, and all six are reported.
+
+### Issuer reference data added: `tools/issuer_meta.py`
+
+The dataset had 59 features and none described the company -- no industry,
+no size, no listing venue. SEC serves industry free at
+`data.sec.gov/submissions/CIK##########.json`, keyed on the `issuer_cik`
+already in the events parquet. All **6,787 issuers fetched, 0 missing**,
+cached in `issuer_meta_cache/`, written to `research_data/issuer_meta.parquet`.
+92.9% of research rows get a SIC major group; 67 distinct groups (top: 60
+banks 2813, 28 pharma 1476, 73 software 661).
+
+Pre-registered results, all evaluated on the tradeable SPY-relative label:
+
+| test | monthly IC | yrs+ | vol-neutral | top-10 vs SPY |
+|---|---|---|---|---|
+| T1 baseline | +0.0622 | 7/7 | +0.0336 | +4.70% |
+| T2 + beta features | +0.0577 | 7/7 | +0.0113 | +1.74% |
+| T3 + sector as a FEATURE | +0.0541 | 7/7 | +0.0166 | +0.81% |
+| **T4 sector-relative LABEL** | **+0.0716** | **7/7** | **+0.0508** | +7.98% |
+| T5 everything | +0.0377 | 6/7 | +0.0222 | -3.62% |
+| T6 downside + everything | +0.0520 | 5/7 | -0.0150 | -10.76% |
+
+**Giving the model the industry made it worse; judging each buy against its
+industry made it better.** T4 has the highest vol-neutral IC ever measured
+here (+0.051, a 50% improvement on baseline) -- the metric hardest to fake.
+The ranking genuinely improved. The portfolio still did not survive the seed
+sweep above.
+
+Beta (`x_beta_252`, `x_idio_vol_252`, computed point-in-time from
+`price_cache`) was a clean negative: beta-adjusting the label moved its
+stdev from 0.1691 to 0.1693. Idiosyncratic risk dominates at these sizes;
+market beta explains almost nothing. Kept in the scratch dataset, not
+promoted.
+
+### Answer: is the live scraper worth acting on?
+
+The direct question -- does scraping the last few days/weeks of Form 4s
+surface anything tradeable -- measured on all 10,905 cluster episodes:
+
+| hold | vs SPY | vs IWM (small) | vs IWC (micro) | win rate |
+|---|---|---|---|---|
+| **10 days** | -7.89% | **-0.69%** | **-1.45%** | 48.2% |
+| 21 days | -12.82% | -6.52% | -6.94% | 46.3% |
+| 63 days | -14.17% | -10.73% | -11.45% | 43.9% |
+| 252 days | -17.02% | - | - | 38.5% |
+
+**At the shortest horizon a fresh insider cluster is worth exactly a
+small-cap index fund** (-0.69% vs IWM, inside noise). Every day you hold
+beyond that, you lose. There is no post-filing drift to capture -- the curve
+only slopes down.
+
+Nor does any intuitive refinement rescue it. Median 21-day excess by quartile:
+
+- filing speed (fastest -> slowest): -0.66%, -0.69%, -1.01%, -0.94%. Reacting
+  fast to a fresh filing buys nothing.
+- number of insiders: -0.75%, -1.22%, -0.54%, -0.79%. No pattern.
+- total dollars bought: -1.09%, -0.81%, -0.63%, -0.74%. No pattern.
+- CEO share of the buying: -1.05%, -1.18%, -0.31%, -0.75%. No pattern.
+- 10%-owner count: -0.92%, -0.69%, -0.94%, -0.74%. No pattern, consistent
+  with [[ten-pct-owner-ranks-negative]].
+
+**So: the scraper is not a buy signal.** The cluster-buy event itself carries
+approximately zero information about forward returns. What the pipeline DOES
+produce reliably is the bottom of the ranking -- the worst decile loses 2.85%
+in three weeks, in every year, under every seed. Knowing which insider buys
+to skip is the durable output. Knowing which to buy is not.
+
 ## Known gaps
 
 - Concurrent-selling features blocked on the targeted scrape above.
 - Survivorship bounding not yet implemented.
 - No pytest config in the repo. Tests run via `python -m pytest tests/ -q`.
+- Steps 2-4 of the review's next-steps list are still open: gating unscored
+  candidates out of `model_ranked_*` (only warned about, not fixed), the
+  `P(adj_63 > -0.30)` downside score, and reporting log-excess alongside
+  `adj_63` in the engine's own output. Step 1 is done.
+- `PRODUCTION_SCORE_MODEL` is still `tail_classifier`, so `--fit-production`
+  bundles the score the review found harmful. Left alone deliberately:
+  changing it silently reaims the live screener. Decide it on purpose.
+- `portfolio_sharpe_table` gets 27 non-overlapping periods out of the 8-year
+  dataset. That is enough to rank scores coarsely and not enough to call a
+  0.2 Sharpe difference real.
+- The 21-day quantile ranker and the sector-relative label are NOT in the
+  pipeline. Both live in scratch scripts only. `research/model.py` still
+  fits regressor/classifier/tail/sharpe against `adj_63`.
+- `tools/issuer_meta.py` is standalone: nothing in `backtest/research.py`
+  joins `issuer_meta.parquet` yet, so `sic_major` is not an available
+  feature or label input inside the real pipeline.
+- `exchange` from the submissions API is CURRENT, not point-in-time.
+  Uplisting/delisting are exactly the events that move a stock, so it must
+  not become a feature without a point-in-time source. `sic_major` is much
+  safer (reassignment is rare, the 2-digit cut is coarse) but is still
+  today's classification.
+- Still no size/market-cap, valuation, short interest, or earnings-date
+  data. Earnings proximity is the most obviously missing one for a 21-day
+  horizon.
+- Survivorship, measured again on the current events file: **33.2% of buy
+  tickers have no price file at all, covering 24.9% of buy rows and 27.1%
+  of buy dollars.** Any ETF-beating claim smaller than this bias is not
+  measurable with free data.

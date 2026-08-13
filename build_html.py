@@ -33,13 +33,21 @@ payload reaches render_html):
 `verdict` is one of "top_decile" / "no_edge" / "unavailable" (see
 research/live_score.py's Verdict enum); a cluster whose model_score is None
 was never scored at all (no production bundle on disk this run) and is
-rendered as "not_scored". Only "top_decile" (percentile >= 90 against the
-model's fixed training-score distribution) has a measured, volatility-
-matched edge (+4.74pp, p=0.004, positive in 4/5 backtested folds) -- every
-other state is "no measured edge", not "bad". This module never renders a
-smoothed 0-100 confidence number for that reason: see model_sort_key,
-factor_favorable, and the always-visible <section class="model-banner"> in
-render_html for how that constraint plays out in the actual markup.
+rendered as "not_scored". This module never renders a smoothed 0-100
+confidence number: see model_sort_key, factor_favorable, and the
+always-visible <section class="model-banner"> in render_html.
+
+WHAT THE BANNER SAYS AND WHY IT CHANGED. This docstring, and the banner
+itself, used to assert that "top_decile" carried a measured
+volatility-matched edge of +4.74pp (p=0.004, 4/5 folds). Later work
+contradicted that: the same shipped score has pooled rank IC -0.053 against
+forward return, is positive in only 1 of 7 years, and its top decile carries
+about 6x the 30%-loss rate of its bottom decile. Both results can hold at
+once -- a fat right tail and a fat left tail -- but a product reporting only
+the encouraging half misleads. Every claim the banner now makes comes from
+findings.py, which holds the numbers next to their provenance so
+that correcting the research corrects the product. Do not hard-code an
+evidence claim in this file again.
 """
 
 import html
@@ -48,6 +56,8 @@ import os
 import re
 import sys
 from typing import Optional
+
+import findings
 
 
 OUTPUT_DIR = "out"
@@ -132,11 +142,12 @@ def _count_color(n: int) -> str:
 # Shared with insider_cluster_buys.py's write_excel so the xlsx and the HTML
 # report the exact same verdict labels, favorable/unfavorable calls, and
 # default sort order -- "keep it consistent with the HTML" per this
-# project's own constraint. See research/live_score.py's module docstring
-# for the evidence (top-decile edge, label-shuffle failure) this all rests on.
+# project's own constraint. See research/live_score.py's module docstring for
+# the evidence (label-shuffle failure, and why the old top-decile edge claim
+# was retired) this all rests on, and findings.py for the live numbers.
 # ---------------------------------------------------------------------------
 VERDICT_LABELS: dict[str, str] = {
-    "top_decile": "Top decile — measured edge",
+    "top_decile": "Top decile — most volatile",
     "no_edge": "No measured edge",
     "unavailable": "Unavailable (too few features)",
     "not_scored": "Not scored",
@@ -237,7 +248,14 @@ def _percentile_sentence(percentile, n_training, verdict: Optional[str]) -> str:
     base = f"{pf:.0f}th percentile" + (f" of {n_str} historical cluster buys" if n_str else "")
     if verdict == "top_decile":
         top_pct = max(100.0 - pf, 0.0)
-        return f"Top {top_pct:.0f}% of{(' ' + n_str) if n_str else ''} historical cluster buys — the one band with a measured edge."
+        crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
+        crash_lo = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0] * 100
+        return (
+            f"Top {top_pct:.0f}% of{(' ' + n_str) if n_str else ''} historical "
+            f"cluster buys. This band is the most volatile, not the best: in "
+            f"backtesting it lost more than 30% in 63 days {crash_hi:.0f}% of "
+            f"the time, against {crash_lo:.0f}% for the lowest-scoring band."
+        )
     return f"{base} — no measured edge at this level (see the legend above)."
 
 
@@ -245,8 +263,8 @@ _VERDICT_SORT_RANK = {"top_decile": 0, "no_edge": 1, "unavailable": 2}
 
 
 def model_sort_key(cluster: dict):
-    """Default cluster ordering: the proven-edge band first (top_decile,
-    ranked by percentile -- the one band where finer ordering is at least
+    """Default cluster ordering: the top_decile band first (ranked by
+    percentile -- the one band where finer ordering is at least
     directionally supported by the evidence), then no-measured-edge
     clusters (percentile is still honest information, just not a proven
     ranking signal outside the top decile, so it is used only as a mild
@@ -328,16 +346,20 @@ def render_html(payload: dict) -> str:
         else:
             coverage_bits.append("no issuer-history reference frame — issuer-history features unavailable this run")
         coverage_line = "; ".join(coverage_bits) + "."
+        yrs_pos, yrs_tot = findings.SHIPPED_MODEL_YEARS_POSITIVE
+        crash_lo = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0] * 100
+        crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
         banner_body = (
+            f"<b>{_esc(findings.headline())}</b> "
             f"Clusters below are ranked by a trained model's percentile against "
-            f"{n_training:,} historical cluster buys — not by the old hand-tuned "
-            f"score. <b>Only the top decile (percentile &ge; 90) has a measured edge:</b> "
-            f"+4.74pp over a volatility-matched benchmark, p=0.004, positive in 4 of 5 "
-            f"backtested folds. Everything else is labelled &ldquo;no measured "
-            f"edge,&rdquo; not &ldquo;bad&rdquo; — the model fails a label-shuffle "
-            f"test on broad rank skill (IC &minus;0.0067, p=0.857), so percentile "
-            f"differences below the top decile carry no shown information. Clusters "
-            f"scored on fewer than half the model's inputs are marked "
+            f"{n_training:,} historical cluster buys. <b>A high percentile here means "
+            f"&ldquo;volatile,&rdquo; not &ldquo;good.&rdquo;</b> Measured out of "
+            f"sample, this score's rank correlation with forward return is "
+            f"{findings.SHIPPED_MODEL_POOLED_IC:+.3f} — positive in only {yrs_pos} of "
+            f"{yrs_tot} years — and its highest-scoring decile lost more than 30% in "
+            f"63 days {crash_hi:.0f}% of the time against {crash_lo:.0f}% for its "
+            f"lowest-scoring decile. Use the ranking to decide what to LEAVE ALONE. "
+            f"Clusters scored on fewer than half the model's inputs are marked "
             f"&ldquo;unavailable&rdquo; rather than given a number that looks precise "
             f"but is not. This run: {coverage_line}"
         )
@@ -347,6 +369,50 @@ def render_html(payload: dict) -> str:
             "unscored (no percentile, no verdict). See the run log for where "
             "insider_cluster_buys.py looked."
         )
+
+    # ---- "What to expect" panel. Everything here is measured; the numbers
+    # and their provenance live in findings.py, never inline.
+    best = findings.HORIZON_EXPECTATIONS[0]
+    expect_lead = _esc(
+        findings.headline() + " "
+        f"Across {findings.PROVENANCE.split(',')[1].strip()}, the average flagged "
+        f"cluster held {best.trading_days} trading days returned "
+        f"{best.vs_iwm * 100:+.1f}%/yr against a small-cap index fund — "
+        f"indistinguishable from simply owning the index. Held longer it does "
+        f"worse, not better. There is no post-filing pop to capture."
+    )
+    expect_rows = "".join(
+        "<tr><td>{}</td><td class=\"{}\">{}</td><td class=\"{}\">{}</td>"
+        "<td class=\"{}\">{}</td><td>{}</td></tr>".format(
+            _esc(hold),
+            "neg" if spy.startswith("-") else "pos", _esc(spy),
+            "neg" if iwm.startswith("-") else "pos", _esc(iwm),
+            "neg" if iwc.startswith("-") else "pos", _esc(iwc),
+            _esc(win),
+        )
+        for hold, spy, iwm, iwc, win in findings.expectation_rows()
+    )
+    _bench = ", ".join(f"{k} {v * 100:.1f}%/yr" for k, v in findings.BENCHMARK_CAGR.items())
+    expect_bench_note = _esc(
+        "Why the two columns differ so much: over this window "
+        f"{_bench}. Small companies trailed the S&P by about 6 points a year for "
+        "eight years, so roughly half of what looks like 'insiders pick badly' "
+        "is really that size gap, not insider skill."
+    )
+    expect_flat = "".join(
+        "<tr><td>{}</td><td class=\"mono\">{}</td></tr>".format(
+            _esc(label), _esc("  ".join(f"{v * 100:+.2f}%" for v in quartiles))
+        )
+        for label, quartiles in findings.FLAT_REFINEMENTS
+    )
+    expect_points = "".join(f"<li>{_esc(p)}</li>" for p in findings.key_points())
+    expect_prov = _esc(findings.PROVENANCE)
+    expect_cost = _esc(f"{findings.ROUND_TRIP_COST * 1e4:.0f}bps")
+    # Legend substitutions, from the same single source as the banner.
+    crash_lo_pct = f"{findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0] * 100:.0f}%"
+    crash_hi_pct = f"{findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100:.0f}%"
+    shipped_ic = f"{findings.SHIPPED_MODEL_POOLED_IC:+.3f}"
+    yrs_pos_txt = "{} of {}".format(*findings.SHIPPED_MODEL_YEARS_POSITIVE)
 
     rows_html_parts: list[str] = []
     for idx, c in enumerate(clusters):
@@ -515,9 +581,27 @@ def render_html(payload: dict) -> str:
   .stat {{ background: #f9fafb; padding: 12px; border-radius: 6px; border: 1px solid #e5e7eb; }}
   .stat .label {{ font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.5px; }}
   .stat .value {{ font-size: 22px; font-weight: 600; margin-top: 4px; }}
-  section.model-banner {{ margin: 0; padding: 14px 24px; background: #eff6ff;
-                          border-bottom: 1px solid #bfdbfe; font-size: 12.5px;
-                          color: #1e3a5f; line-height: 1.55; }}
+  section.model-banner {{ margin: 0; padding: 14px 24px; background: #fef3c7;
+                          border-bottom: 1px solid #fcd34d; font-size: 12.5px;
+                          color: #4a3410; line-height: 1.55; }}
+  details.expect {{ background: #fff; border-bottom: 1px solid #e5e7eb;
+                    font-size: 12.5px; color: #1f2937; }}
+  details.expect > summary {{ padding: 12px 24px; cursor: pointer; font-weight: 700;
+                              color: #7c2d12; background: #fffbeb; }}
+  .expect-body {{ padding: 4px 24px 18px; line-height: 1.55; }}
+  .expect-lead {{ margin: 8px 0 14px; max-width: 78ch; }}
+  .expect-body h4 {{ margin: 18px 0 8px; font-size: 13px; color: #374151; }}
+  table.expect-table {{ border-collapse: collapse; margin: 6px 0 10px; font-size: 12px; }}
+  table.expect-table th, table.expect-table td {{ border: 1px solid #e5e7eb;
+                                                  padding: 5px 10px; text-align: left; }}
+  table.expect-table th {{ background: #f9fafb; font-weight: 600; }}
+  table.expect-table td.neg {{ color: #b91c1c; font-variant-numeric: tabular-nums; }}
+  table.expect-table td.pos {{ color: #15803d; font-variant-numeric: tabular-nums; }}
+  table.expect-table td.mono {{ font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+                                font-variant-numeric: tabular-nums; }}
+  ul.expect-points {{ margin: 6px 0 10px; padding-left: 20px; max-width: 84ch; }}
+  ul.expect-points li {{ margin-bottom: 7px; }}
+  .expect-note {{ color: #6b7280; font-size: 11.5px; max-width: 84ch; margin: 8px 0; }}
   .model-banner-title {{ font-weight: 700; color: #1e3a8a; font-size: 13px;
                          text-transform: uppercase; letter-spacing: 0.4px; margin-bottom: 6px; }}
   .model-banner-body b {{ color: #1e3a8a; }}
@@ -577,7 +661,10 @@ def render_html(payload: dict) -> str:
                   font-weight: 600; font-size: 12px; color: #fff; }}
   .verdict {{ display: inline-block; padding: 2px 10px; border-radius: 10px;
              font-size: 11.5px; font-weight: 700; white-space: nowrap; }}
-  .verdict-top_decile {{ background: #d1fae5; color: #065f46; }}
+  /* Deliberately NOT green. This band is the most volatile, not the best --
+     see the legend and findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE. A green
+     "good" badge contradicted the text sitting next to it. */
+  .verdict-top_decile {{ background: #fed7aa; color: #9a3412; }}
   .verdict-no_edge {{ background: #e5e7eb; color: #4b5563; }}
   .verdict-unavailable {{ background: #fef3c7; color: #92400e; }}
   .verdict-not_scored {{ background: #f3f4f6; color: #9ca3af; }}
@@ -642,7 +729,7 @@ def render_html(payload: dict) -> str:
   <div class="stat"><div class="label">Insiders Involved</div><div class="value">{summary['insiders']}</div></div>
   <div class="stat"><div class="label">Total Acquired $</div><div class="value">{summary['total_value']}</div></div>
   <div class="stat"><div class="label">Model-Scored</div><div class="value">{summary['model_scored']}</div></div>
-  <div class="stat"><div class="label">Top Decile (Edge)</div><div class="value">{summary['top_decile']}</div></div>
+  <div class="stat"><div class="label">Top Decile (highest risk)</div><div class="value">{summary['top_decile']}</div></div>
 </section>
 
 <section class="model-banner">
@@ -650,14 +737,36 @@ def render_html(payload: dict) -> str:
   <div class="model-banner-body">{banner_body}</div>
 </section>
 
+<details class="expect">
+  <summary>What to expect if you buy these &mdash; measured, {findings.MEASURED_ON}</summary>
+  <div class="expect-body">
+    <p class="expect-lead">{expect_lead}</p>
+    <table class="expect-table">
+      <thead><tr><th>If you hold for</th><th>vs S&amp;P 500</th><th>vs small-cap index</th>
+      <th>vs micro-cap index</th><th>Chance of a gain</th></tr></thead>
+      <tbody>{expect_rows}</tbody>
+    </table>
+    <p class="expect-note">{expect_bench_note}</p>
+    <h4>Refinements that were tested and did <em>not</em> help</h4>
+    <table class="expect-table">
+      <thead><tr><th>Idea</th><th>Median 3-week result, worst quartile &rarr; best</th></tr></thead>
+      <tbody>{expect_flat}</tbody>
+    </table>
+    <h4>Before you act on any of this</h4>
+    <ul class="expect-points">{expect_points}</ul>
+    <p class="expect-note">Source: {expect_prov}. Round-trip cost assumed:
+    {expect_cost}. Full record in RESEARCH_NOTES.md.</p>
+  </div>
+</details>
+
 <details class="legend">
   <summary>Legend</summary>
   <div class="legend-grid">
     <h4>Model verdict &amp; percentile &mdash; click any row for the per-factor reasons panel</h4>
     <span class="lg-key"><span class="verdict verdict-top_decile">Top decile</span></span>
-    <span class="lg-desc">Percentile &ge; 90 against the model's own training-score distribution &mdash; the only band with a measured, volatility-matched edge (+4.74pp, p=0.004, 4/5 folds).</span>
+    <span class="lg-desc">Percentile &ge; 90 against the model's own training-score distribution. This is the <b>highest-risk</b> band, not the best one: measured out of sample it lost more than 30% in 63 days {crash_hi_pct} of the time, against {crash_lo_pct} for the lowest-scoring decile. Read it as &ldquo;most volatile.&rdquo;</span>
     <span class="lg-key"><span class="verdict verdict-no_edge">No measured edge</span></span>
-    <span class="lg-desc">Everything below the top decile. The model fails a broad rank-skill test here (IC &minus;0.0067, p=0.857) &mdash; this means &ldquo;unproven,&rdquo; not &ldquo;bad.&rdquo;</span>
+    <span class="lg-desc">Everything below the top decile. The model shows no reliable broad rank skill (pooled IC {shipped_ic}, positive in {yrs_pos_txt} years) &mdash; this means &ldquo;unproven,&rdquo; not &ldquo;bad.&rdquo;</span>
     <span class="lg-key"><span class="verdict verdict-unavailable">Unavailable</span></span>
     <span class="lg-desc">Fewer than half the model's 50 inputs could be computed for this cluster (see &ldquo;reduced features&rdquo; below) &mdash; the score exists but is not trustworthy enough to band.</span>
     <span class="lg-key"><span class="verdict verdict-not_scored">Not scored</span></span>

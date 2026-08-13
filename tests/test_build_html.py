@@ -14,6 +14,7 @@ from __future__ import annotations
 import math
 
 import build_html as bh
+import findings
 
 
 # ---------------------------------------------------------------------------
@@ -211,7 +212,42 @@ def test_render_html_top_decile_cluster_shows_edge_badge_and_percentile():
     assert "verdict-top_decile" in html_out
     assert "96th percentile" in html_out
     assert "Favorable" in html_out
-    assert "only the top decile" in html_out.lower() or "top decile (percentile" in html_out.lower()
+
+    # The banner must NOT sell the top decile as an edge. This assertion
+    # replaced one that required the words "only the top decile [has a
+    # measured edge]". That claim came from an early volatility-matched
+    # test and was later contradicted: the shipped score's pooled rank IC
+    # is negative and its top decile carries ~6x the 30%-loss rate of its
+    # bottom decile. The banner now says so, sourced from findings.py.
+    low = html_out.lower()
+    assert "volatile" in low, "banner must reframe a high percentile as risk, not quality"
+    # The specific retired claim must never reappear. ("No measured edge" is
+    # still a legitimate verdict LABEL, so match the number, not the phrase.)
+    assert "4.74" not in html_out, (
+        "the retired '+4.74pp volatility-matched edge' claim must not come back; "
+        "see findings.SHIPPED_MODEL_* for what is actually measured"
+    )
+    # The crash-rate contrast is the substance of the correction, so pin it.
+    assert f"{findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100:.0f}%" in html_out
+
+
+def test_render_html_shows_what_to_expect_panel():
+    """The dashboard must carry the measured base rates, not just a ranking.
+    A user looking at flagged clusters needs to know what buying them has
+    historically produced -- the decay curve, the flat refinements, and the
+    survivorship caveat -- or the list reads as a recommendation."""
+    html_out = bh.render_html(_payload([_minimal_cluster()]))
+    assert "What to expect" in html_out
+    assert "skip list" in html_out
+    # Every horizon row present, both yardsticks labelled.
+    for h in findings.HORIZON_EXPECTATIONS:
+        assert f"{h.trading_days} trading days" in html_out
+    assert "vs small-cap index" in html_out and "vs micro-cap index" in html_out
+    # The refinements that did not work are shown rather than silently omitted.
+    for label, _ in findings.FLAT_REFINEMENTS:
+        assert label in html_out
+    # Survivorship caveat survives into the rendered page.
+    assert "no price history" in html_out.lower()
 
 
 def test_render_html_degraded_cluster_shows_reduced_features_chip():
