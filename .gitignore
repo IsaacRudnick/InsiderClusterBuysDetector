@@ -1,5 +1,9 @@
 # Contains SEC_USER_AGENT with a real contact email. See .env.example.
+# Ignore every .env variant (.env.local, .env.prod) except the checked-in
+# template, so a machine-specific copy can never be committed by accident.
 .env
+.env.*
+!.env.example
 
 # ---------------------------------------------------------------------------
 # Caches. Expensive to rebuild but reproducible, and far too large for git.
@@ -44,5 +48,14 @@ htmlcov/
 .vscode/
 .idea/
 *.swp
+*~
+*.bak
+.DS_Store
 Thumbs.db
 desktop.ini
+
+# ---------------------------------------------------------------------------
+# Tooling
+# ---------------------------------------------------------------------------
+# Per-machine permission grants. CLAUDE.md itself is committed.
+.claude/settings.local.json
