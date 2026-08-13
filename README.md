@@ -9,9 +9,14 @@ inside a rolling window.
 | **Live screener** | Scans recent EDGAR filings, scores today's clusters, writes a shareable dashboard | `run.bat` → `insider_cluster_buys.py` |
 | **Backtester** | Fits the ranking model, then runs 63 strategies × 7 exit methods over history | `backtest.bat` → `run_research.py` + `backtest.py` |
 
-Informational tooling, not financial advice. Read
-[Findings](#findings-read-this-before-trusting-a-number) before you believe
-any number this produces.
+Informational tooling, not financial advice.
+
+**The headline, up front: this is a skip list, not a pick list.** The reliable,
+repeatable result is identifying insider cluster buys to *avoid*. No
+configuration tested produced a portfolio that beat an index fund in a way
+that survived changing the model's random seed. Read
+[Findings](#findings-read-this-before-trusting-a-number) before you believe any
+number this produces.
 
 ---
 
@@ -56,10 +61,14 @@ to a score that does not work.
 
 | Verdict | Meaning |
 |---|---|
-| `top_decile` | Percentile ≥ 90. The only state with a measured, volatility-matched edge. |
-| `no_edge` | Scored, below the top decile. Not "bad" — just no measured edge. |
-| `unavailable` | Too few features resolved to score it. |
+| `top_decile` | Percentile ≥ 90. The **most volatile** band, not the best one — measured out of sample it lost >30% in 63 days 16.8% of the time, against 2.5% for the lowest decile. Read it as "volatile", not "good". |
+| `no_edge` | Scored, below the top decile. Means "unproven", not "bad". |
+| `unavailable` | Fewer than half the model's 50 inputs could be computed. |
 | `not_scored` | No production bundle was on disk this run. |
+
+Every evidence claim the dashboard makes comes from `findings.py`, which keeps
+each number next to its provenance so that correcting the research corrects the
+product. Do not hard-code an evidence claim into a rendering function.
 
 To re-render the dashboard after editing CSS or legend copy, without paying
 for a fresh EDGAR scan:
@@ -175,6 +184,10 @@ backtest.py                 entry point — the strategy grid
 run_research.py             entry point — dataset build + model fit
 insider_cluster_buys.py     entry point — the live EDGAR screener
 build_html.py               dashboard renderer (one consumer: the screener)
+findings.py                 every measured claim the product states, next to its
+                            provenance. Correcting the research here corrects
+                            the dashboard and the workbook. Never inline a
+                            number into a rendering function.
 ipo_lookup.py               first-trade dates; shared by the screener AND backtest/
 
 backtest/                   the backtester's own modules
@@ -222,28 +235,45 @@ Back up `parse_cache/` and `clusters_history/`. They are the expensive ones.
 `RESEARCH_NOTES.md` is the full record. The short version, because several of
 these invalidate the obvious reading of a report:
 
-- **Survivorship bias is the biggest validity problem.** Tickers with no price
-  data are *dropped*, not zeroed. `n_skipped_no_price` runs to 37,956 lots
-  against 48,557 kept. The missing third is concentrated in the delisted
-  micro-caps that insider clusters favour, so it is not a random third. Every
-  absolute return is an upper bound.
-- **Raw top-decile lift is volatility, not skill.** Real alpha (+5.97pp,
-  positive in 5 of 5 folds) appears only once picks are matched to the
-  benchmark on risk.
-- **Alpha decays to zero by 25 slots**, and shorter holds are worse. The edge
-  exists only in the most concentrated configurations — which is to say,
-  mostly where it cannot be measured with confidence.
+- **The cluster-buy event is not a buy signal.** Held ~2 weeks, the average
+  flagged cluster returns −0.69%/yr against a small-cap index fund —
+  indistinguishable from just owning the index. Held longer it does *worse*:
+  −6.5%/yr at 21 days, −10.7%/yr at 63. The curve only slopes down, so there is
+  no post-filing drift to capture.
+- **The shipped score rises with crash risk, not against it.** Pooled rank IC
+  −0.053, positive in only 1 of 7 years, and its top decile carries ~6x the
+  30%-loss rate of its bottom decile. An earlier volatility-matched test found
+  +4.74pp (p=0.004) for that same top decile; both can be true — fat right tail
+  *and* fat left tail — but the encouraging half alone is misleading. That
+  claim is retired throughout the codebase.
+- **None of the obvious quality filters work.** More insiders, bigger dollar
+  amounts, CEO share of buying, ten-percent-owner involvement, and reacting
+  faster to a fresh filing were each tested by quartile. All flat.
+- **Survivorship bias caps everything above.** 33.2% of tickers are
+  unpriceable — they stopped trading and the provider deleted them — along with
+  24.9% of buy rows and 27.1% of buy dollars. Those rows are *dropped*, not
+  zeroed, so every absolute return is optimistic by an unknown margin.
+- **Half the "insiders pick badly" result is the size factor**, not insider
+  skill: small caps trailed SPY by ~6pp/yr over the measured window. Both SPY
+  and IWM/IWC yardsticks are kept for that reason — reporting only the
+  flattering one is benchmark shopping.
+- **A ranking that holds up does exist, but is not what runs here.** A 21-day
+  median-targeting ranker gives monotone deciles, positive in 7 of 7 years, and
+  survives a volatility-neutral audit that four higher-headline candidates
+  failed. `research/model.py` still fits against `adj_63`.
 - **`conviction_score` does not rank.** No monotonicity; score −1 beats +9 and
-  +10. It is retained for comparison only, and is gone from the dashboard.
-- **The `ten_percent_owner` flag is significantly harmful** (t_alpha −2.75),
-  which answers the question the project was started to ask.
+  +10. Retained for comparison only, and gone from the dashboard.
 - **Sub-dollar lots and unadjusted splits used to decide the leaderboard.**
   0.7% of lots once produced 58% of grid P&L, and a single unadjusted reverse
   split gave a "winning" strategy 83% of its P&L. `BT_MIN_PRICE` and
   `backtest/split_fingerprint.py` exist because of this. Audit P&L
   concentration before believing any ranking.
-- **Refit instability decides the headline.** 1.07% fewer training rows moved
-  a flagship result from +229.6% to +151.0%. Only the 5-slot variant survived
-  the refit.
+- **Refit instability decides the headline.** 1.07% fewer training rows moved a
+  flagship result from +229.6% to +151.0%. Only the 5-slot variant survived.
 - **The `learned_*` strategies are in-sample.** They are in the grid for
   completeness. Their numbers are not evidence.
+
+Numbers above are sourced from `findings.py` (provenance:
+`research_groupE_10905rows_20260809.parquet`, 10,905 cluster episodes,
+2018-08…2026-08, expanding-window out-of-sample, measured 2026-08-13) and
+`RESEARCH_NOTES.md`.

@@ -77,13 +77,19 @@ evidence:
     p=0.857 -- see research.model.run_label_shuffle_test). It has NO
     reliable BROAD ordering skill: score 40th percentile vs score 60th
     percentile carries no shown information.
-  - But its TOP DECILE has a genuine, volatility-matched edge: +4.74pp
-    over a risk-matched benchmark, p=0.004, positive in 4 of 5 folds
-    (fold 2 was negative, -1.53pp -- the edge is real but not unanimous).
-    (oof_classifier: +2.98pp, p=0.015, 4/5 folds. oof_regressor: +3.34pp,
-    p=0.038, 4/5 folds. The tail classifier -- research.model.
-    PRODUCTION_SCORE_MODEL, backtest.model_scores.DEFAULT_SCORE_COL -- is
-    the +4.74pp, p=0.004, 4/5 result and is what this module scores with.)
+  - Its TOP DECILE was once measured at a volatility-matched +4.74pp over a
+    risk-matched benchmark (p=0.004, positive in 4 of 5 folds; oof_classifier
+    +2.98pp, oof_regressor +3.34pp). THAT CLAIM IS RETIRED. A later audit of
+    the same shipped score -- research.model.PRODUCTION_SCORE_MODEL,
+    backtest.model_scores.DEFAULT_SCORE_COL, which is what this module scores
+    with -- found pooled rank IC -0.053 against forward return, positive in
+    only 1 of 7 years, and a top decile carrying roughly 6x the 30%-loss rate
+    of the bottom decile (16.8% vs 2.5%). Both can hold at once: the band has
+    a fat right tail AND a fat left tail. Read a high score as "volatile",
+    not "good". The banding below is still justified -- the model has no
+    broad ordering skill either way -- but it no longer marks an edge.
+    The numbers above are frozen history; findings.py is the live source for
+    anything the product states, and it is what the dashboard renders.
   - Portfolio confirmation, and its limits. The 10-slot result once quoted
     here (+229.6% over 72 months, Sharpe 1.107) DID NOT SURVIVE A REFIT and
     has been retired. On the current noreuse fit the same strategy returns
@@ -621,7 +627,7 @@ def score_to_percentile(raw_score: float, training_scores: np.ndarray) -> float:
 # third meaningful tier without new evidence backing it.
 # ---------------------------------------------------------------------------
 class Verdict(str, Enum):
-    TOP_DECILE = "top_decile"   # percentile >= TOP_DECILE_PERCENTILE_CUTOFF: the one band with a measured edge
+    TOP_DECILE = "top_decile"   # percentile >= TOP_DECILE_PERCENTILE_CUTOFF: the most volatile band, NOT a measured edge
     NO_EDGE = "no_edge"         # everything else: the model does not reliably separate these
     UNAVAILABLE = "unavailable"  # too many features missing, or no usable score, to render any verdict
 
@@ -631,7 +637,9 @@ class Verdict(str, Enum):
 # "top decile" means the top 10% by score -- percentile >= 90 on the SAME
 # fixed reference distribution the decile analysis itself was measured
 # against (ProductionBundle.training_scores). This is not a separately
-# chosen threshold; it is the same cut the +4.74pp evidence was measured at.
+# chosen threshold; it is the same cut the (now retired) +4.74pp evidence was
+# measured at, and the same cut findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE
+# reports the elevated crash rate for.
 TOP_DECILE_PERCENTILE_CUTOFF = 90.0
 
 # Backstop only, not the primary way to reason about data quality --

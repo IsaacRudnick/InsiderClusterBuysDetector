@@ -51,6 +51,7 @@ from openpyxl.utils import get_column_letter
 
 import ipo_lookup
 from build_html import factor_favorable, fmt_factor_value, model_sort_key, render_html, verdict_label
+import findings
 
 
 # ---------------------------------------------------------------------------
@@ -1415,10 +1416,7 @@ def write_excel(clusters: list[dict], all_rows: list[dict],
         ["Issuer-history reference frame path", mi.get("issuer_history_path") or ""],
         ["Issuer-history reference rows", mi.get("n_issuer_history_rows", 0)],
         ["", ""],
-        ["Only the Top Decile verdict (percentile >= 90) has a measured, "
-         "volatility-matched edge: +4.74pp, p=0.004, positive in 4/5 backtested "
-         "folds. Everything else is 'No measured edge', not 'bad' -- the model "
-         "fails a label-shuffle test on broad rank skill (IC -0.0067, p=0.857).", ""],
+        [findings.headline(), ""],
     ]
     ws4.append(["Key", "Value"])
     for cell in ws4[1]:
@@ -1428,6 +1426,37 @@ def write_excel(clusters: list[dict], all_rows: list[dict],
         ws4.append(row)
     ws4.column_dimensions["A"].width = 70
     ws4.column_dimensions["B"].width = 30
+
+    # --- Sheet 5: What To Expect -- the measured base rates, so the Excel
+    # artifact carries the same honesty the dashboard's "What to expect"
+    # panel does. Numbers come from findings.py, never inline here.
+    ws5 = wb.create_sheet("What To Expect")
+    exp_cols = ["If you hold for", "vs S&P 500", "vs small-cap index",
+                "vs micro-cap index", "Chance of a gain"]
+    _style_header(ws5, exp_cols)
+    exp_rows = [list(t) for t in findings.expectation_rows()]
+    for row_idx, row in enumerate(exp_rows, start=2):
+        for col_idx, val in enumerate(row, start=1):
+            ws5.cell(row=row_idx, column=col_idx, value=val)
+    _autosize(ws5, exp_cols, exp_rows)
+
+    r = len(exp_rows) + 3
+    ws5.cell(row=r, column=1, value="Refinements tested that did NOT help "
+                                    "(median 3-week result by quartile, worst to best)").font = HEADER_FONT
+    for label, quartiles in findings.FLAT_REFINEMENTS:
+        r += 1
+        ws5.cell(row=r, column=1, value=label)
+        ws5.cell(row=r, column=2, value="  ".join(f"{v * 100:+.2f}%" for v in quartiles))
+    r += 2
+    ws5.cell(row=r, column=1, value="Before you act on any of this").font = HEADER_FONT
+    for point in findings.key_points():
+        r += 1
+        ws5.cell(row=r, column=1, value=point)
+    r += 2
+    ws5.cell(row=r, column=1, value=f"Source: {findings.PROVENANCE}. Measured "
+                                    f"{findings.MEASURED_ON}. Round-trip cost assumed "
+                                    f"{findings.ROUND_TRIP_COST * 1e4:.0f}bps. "
+                                    f"Full record in RESEARCH_NOTES.md.")
 
     wb.save(path)
 
@@ -1537,11 +1566,30 @@ def main() -> None:
     if model_info.get("model_available"):
         n_scored = sum(1 for c in clusters if c.get("model_score"))
         n_top_decile = sum(1 for c in clusters if (c.get("model_score") or {}).get("verdict") == "top_decile")
-        print(f"  Model:     {n_scored}/{len(clusters)} scored, {n_top_decile} top-decile (measured edge)")
+        crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
+        print(f"  Model:     {n_scored}/{len(clusters)} scored, {n_top_decile} in the "
+              f"top decile ({crash_hi:.0f}% historical 30%-loss rate -- highest risk, "
+              f"not best)")
     else:
         print("  Model:     no production model bundle found -- clusters are unscored")
     print(f"  Excel:     {xlsx_path}")
     print(f"  Dashboard: {html_path}")
+
+    # The one thing a user most needs to carry away, printed every run rather
+    # than buried in the HTML. See findings.py for the measurements.
+    best = findings.HORIZON_EXPECTATIONS[0]
+    print()
+    print("  " + "-" * 68)
+    print(f"  {findings.headline()}")
+    print(f"  Held ~{best.trading_days} trading days, the average flagged cluster has "
+          f"historically returned")
+    print(f"  {best.vs_iwm * 100:+.1f}%/yr vs a small-cap index fund and "
+          f"{best.vs_spy * 100:+.1f}%/yr vs the S&P 500.")
+    print(f"  Holding longer has been worse, not better ({findings.HORIZON_EXPECTATIONS[2].trading_days}d: "
+          f"{findings.HORIZON_EXPECTATIONS[2].vs_iwm * 100:+.1f}%/yr vs small caps).")
+    print(f"  See the 'What to expect' panel in {html_path}, or the")
+    print(f"  'What To Expect' sheet in the workbook, for the full picture.")
+    print("  " + "-" * 68)
 
 
 if __name__ == "__main__":
