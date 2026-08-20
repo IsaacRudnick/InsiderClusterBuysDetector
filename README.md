@@ -11,17 +11,26 @@ inside a rolling window.
 
 Informational tooling, not financial advice.
 
-**The headline, up front: the ranking is now real, but it is still not an
-index-beating claim.** Monthly-cohort rank IC +0.0883 (t=5.08), positive in 7
-of 7 out-of-sample years, volatility-neutral IC +0.0630 against +0.0145 for a
-plain sort-by-low-volatility ranker, decile monotonicity +0.93, and two
+**The headline, up front: the ranking is real, and this time the top band DID
+beat SPY on both return and risk-adjusted return over this window — but you
+likely cannot harvest it.** Monthly-cohort rank IC +0.0883 (t=5.08), positive
+in 7 of 7 out-of-sample years, volatility-neutral IC +0.0630 against +0.0145
+for a plain sort-by-low-volatility ranker, decile monotonicity +0.93, and two
 disjoint 5-seed halves that rank-correlate +0.964 — this is the first score
-measured here that does not move on the RNG seed. But a 70-90th percentile
-band book that measured +19.77%/yr over SPY failed a permutation test at
-p = 0.435: re-running the same 12-band search on shuffled scores produces the
-same +18.46%/yr. What survived is the risk ordering, not a return. Read
-[Findings](#findings-read-this-before-trusting-a-number) before you believe any
-number this produces.
+measured here that does not move on the RNG seed. Holding a 70-90th percentile
+band book measured +34.5%/yr (Sharpe 1.303, Sortino 1.400) against SPY's
++18.1%/yr (Sharpe 1.192) — a 5.77x final multiple against SPY's 2.76x,
+beating SPY in 4 of 7 years — and this Sharpe result **passes** a permutation
+test (p = 0.005; null median 0.987, 95th percentile 1.236), where an earlier,
+raw-return version of the same book (+19.77%/yr) **failed** an identical test
+(p = 0.435). But it is not harvestable: the edge falls below SPY's somewhere
+under 50bps round-trip cost (Sharpe 0.886 at 100bps), falls below SPY's at
+every account size once positions are capped at 10% of a name's daily volume
+(Sharpe 0.750 at $25M), and mostly disappears under a $5 minimum entry price
+(excess over SPY falls from +14.1%/yr to +3.2%/yr); refitting the model inside
+that realistic, tradeable universe gives Sharpe 0.650 against SPY's 1.237.
+Read [Findings](#findings-read-this-before-trusting-a-number) before you
+believe any number this produces.
 
 ---
 
@@ -321,6 +330,37 @@ these invalidate the obvious reading of a report:
   bootstrap prices the sampling of periods but not the selection of the band.
 - **`conviction_score` does not rank.** No monotonicity; score −1 beats +9 and
   +10. Retained for comparison only, and gone from the dashboard.
+- **The top band's Sharpe, not just its return, now passes a permutation
+  test.** Holding a 70-90th-percentile book measured Sharpe 1.303 (Sortino
+  1.400, +34.5%/yr) against SPY's Sharpe 1.192 (+18.1%/yr) — a 5.77x final
+  multiple against SPY's 2.76x, beating SPY in 4 of 7 years — and that Sharpe
+  result survives re-running the same 132-recipe search on shuffled scores
+  (p = 0.005; null median 0.987, 95th percentile 1.236). The earlier raw-return
+  version of this same book (+19.77%/yr) failed an identical test (p = 0.435).
+  The two disagree because a fat right tail inflates mean return and
+  volatility together — that can inflate a raw return statistic by chance, but
+  not a ratio of the two.
+- **Sharpe rises with score, not just return.** Sharpe climbs from 0.21 in
+  the bottom decile to 1.33 in the top — a risk-adjusted confirmation of the
+  band ordering, not only a return-based one.
+- **The Sharpe result is not harvestable.** Cost: Sharpe falls below SPY's
+  somewhere under 50bps round trip (1.303 at 20bps, 1.147 at 50bps, 0.886 at
+  100bps). Liquidity: capping a position at 10% of a name's 20-day dollar
+  volume gives Sharpe 1.107 at $100k of capital, 0.982 at $1M, 0.750 at $25M —
+  below SPY (1.192) at every size tested. Price floor: a $5 minimum entry
+  price cuts annual excess over SPY from +14.1% to +3.2%. These are not
+  optional footnotes — they travel with the number everywhere it is shown.
+- **Refitting inside a tradeable universe does not rescue it.** Rebuilding the
+  model with a $5 price floor, a $1M book, and 50bps costs gives Sharpe 0.650
+  against SPY's 1.237 over the same window.
+- **Long the top band, short the bottom band does not work either.** The
+  bottom band ("elevated risk") still rises in absolute terms over this
+  window — it is the worst-*measured* book, not a losing one — so shorting it
+  loses money on the short leg regardless of the long leg's edge.
+- **Point-in-time earnings-proximity features were built and tested, and they
+  do not help.** Adding them to the live score's feature set moved
+  monthly-cohort IC from +0.0885 to +0.0804 — a decline, not an improvement.
+  Not shipped.
 - **Sub-dollar lots and unadjusted splits used to decide the leaderboard.**
   0.7% of lots once produced 58% of grid P&L, and a single unadjusted reverse
   split gave a "winning" strategy 83% of its P&L. `BT_MIN_PRICE` and
@@ -337,4 +377,8 @@ Numbers above are sourced from `findings.py` (provenance:
 `RESEARCH_NOTES.md`. The `screen_model.py` gauntlet and band numbers are from
 `research_10861rows_20260813.parquet`, 9,095 scored cluster episodes,
 out-of-sample 2020-2026, measured 2026-08-20 — `RESEARCH_NOTES.md`, "A ranking
-that beats the shipped one, and a portfolio claim that dies".
+that beats the shipped one, and a portfolio claim that dies". The
+risk-adjusted book results (`findings.BOOK_RESULTS`) are from the same
+parquet, a 10-seed ensemble of `C19_month_vol_rel_a35_live`, 78
+non-overlapping 21-trading-day periods, equal weight, 20bps round trip,
+measured 2026-08-20.

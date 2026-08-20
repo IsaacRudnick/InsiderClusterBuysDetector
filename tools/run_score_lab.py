@@ -229,6 +229,36 @@ def f_live_only(df):
 
 
 # --------------------------------------------------------------------------
+# Helpers for the risk-adjusted targets
+# --------------------------------------------------------------------------
+
+#: Volatilities below this are treated as this. Dividing a return by a
+#: near-zero volatility produces an enormous target value for what is usually
+#: a data artifact (a barely-traded ticker whose price did not move), and a
+#: quantile loss would then chase those rows.
+VOL_FLOOR = 0.15
+
+
+def _vol_floor(df: pd.DataFrame) -> pd.Series:
+    v = pd.to_numeric(df["x_vol_63_ann"], errors="coerce")
+    return v.clip(lower=VOL_FLOOR).fillna(VOL_FLOOR)
+
+
+def _winsor(s: pd.Series, lo: float = 0.02, hi: float = 0.98) -> pd.Series:
+    """Pull both tails of the TARGET in to its own 2nd/98th percentiles.
+
+    Applied to the training target only, never to the label anything is graded
+    on. The intent is to stop a handful of 1,000% outcomes dominating the loss
+    surface; hiding them from the evaluation would be a different and much
+    worse thing to do.
+    """
+    ok = s.dropna()
+    if ok.empty:
+        return s
+    return s.clip(lower=ok.quantile(lo), upper=ok.quantile(hi))
+
+
+# --------------------------------------------------------------------------
 # The pre-registered registry
 # --------------------------------------------------------------------------
 
@@ -405,6 +435,64 @@ CANDIDATES: list[sl.Candidate] = [
         features=f_live_only,
         notes="Pushes the tilt further into the left tail, to find where the "
               "gradient stops helping.",
+    ),
+    # --- round four: targets aimed at RISK-ADJUSTED return -------------
+    # Round three's winner was selected on rank IC, which scores ordering and
+    # says nothing about what a holder experiences. Measured afterwards, that
+    # score's Sharpe by decile runs 0.21 to 1.33 -- a strong risk-adjusted
+    # gradient that the IC table could not show. These candidates aim at that
+    # quantity directly instead of discovering it by accident, and they are
+    # graded on Sharpe in tools/run_sharpe_search.py as well as on IC here.
+    sl.Candidate(
+        name="S1_vol_scaled_excess",
+        target=lambda df: t_logex21(df) / _vol_floor(df),
+        objective="quantile",
+        alpha=0.35,
+        features=f_live_only,
+        notes="Per-trade Sharpe proxy: log excess divided by the event's own "
+              "ex-ante annualised volatility. The most direct statement of "
+              "'return per unit of risk taken' available before the trade.",
+    ),
+    sl.Candidate(
+        name="S2_vol_scaled_month_rel",
+        target=lambda df: sl.cohort_demean(t_logex21(df), [df["month"]])
+                          / _vol_floor(df),
+        objective="quantile",
+        alpha=0.35,
+        features=f_live_only,
+        notes="S1 with the month removed first, so the model is not rewarded "
+              "for knowing which months were calm.",
+    ),
+    sl.Candidate(
+        name="S3_prob_beats_spy",
+        target=lambda df: (df["adj_21"] > 0).astype(float)
+                          .where(df["adj_21"].notna()),
+        objective="binary",
+        features=f_live_only,
+        notes="P(beats SPY over 21 days). The plainest reading of 'does it go "
+              "up' relative to the alternative of just owning the index.",
+    ),
+    sl.Candidate(
+        name="S4_prob_up_absolute",
+        target=lambda df: (df["fwd_21"] > 0).astype(float)
+                          .where(df["fwd_21"].notna()),
+        objective="binary",
+        features=f_live_only,
+        notes="P(the position is up at all in 21 days), ignoring the "
+              "benchmark. Included because a high win rate is what actually "
+              "drives Sharpe when the payoff is this skewed.",
+    ),
+    sl.Candidate(
+        name="S5_winsorized_month_vol_rel",
+        target=lambda df: _winsor(
+            sl.cohort_demean(t_logex21(df), [df["month"], _vol_bucket(df)])
+        ),
+        objective="quantile",
+        alpha=0.35,
+        features=f_live_only,
+        notes="The shipped target with the extreme 2% of each tail pulled in. "
+              "Tests whether the handful of enormous winners were teaching "
+              "the model anything, or just adding variance to its loss.",
     ),
     sl.Candidate(
         name="C19_month_vol_rel_a35_live",

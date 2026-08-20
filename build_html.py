@@ -51,9 +51,22 @@ four-band verdict above, which measures BOTH better (monthly IC +0.0883,
 positive in 7 of 7 years) AND non-monotonic risk by percentile (elevated_risk
 at the bottom is the durable, worst band; top_band at 70-90 is the
 best-measured; above_band at 90-100 is explicitly worse than top_band, not
-better). Even the best band does not support an index-beating claim -- a
-top_band-only book failed a permutation test (findings.TOP_BAND_PERMUTATION_P
-= 0.435). Every claim the banner and legend make comes from findings.py,
+better).
+
+TWO PERMUTATION TESTS, OPPOSITE ANSWERS, AND THE DIFFERENCE MATTERS. Do not
+collapse them when editing banner copy. The RETURN claim failed: a search for
+the best-performing percentile band reproduced its own +19.77%/yr on shuffled
+scores (findings.TOP_BAND_PERMUTATION_P = 0.435), so no excess-return claim is
+made anywhere. The RISK-ADJUSTED claim passed: the same style of search on
+Sharpe cleared its null at findings.TOP_BAND_SHARPE_PERMUTATION_P = 0.005,
+because a handful of enormous winners inflate the mean AND the volatility and
+so cannot inflate a ratio of the two. The banner therefore MAY state the top
+band's Sharpe and return, and must state them only alongside
+findings.harvestability_note() -- that book needs sub-$5, thinly traded names
+and costs under 50bps, and lands at or below an index fund under every
+realistic constraint. Numbers without that caveat are a misrepresentation.
+
+Every claim the banner and legend make comes from findings.py,
 which holds the numbers next to their provenance so that correcting the
 research corrects the product. Do not hard-code an evidence claim in this
 file again.
@@ -428,7 +441,8 @@ def render_html(payload: dict) -> str:
             f"{_esc(findings.top_band_permutation_note())} "
             f"Clusters scored on fewer than half the model's inputs are marked "
             f"&ldquo;unavailable&rdquo; rather than given a number that looks precise "
-            f"but is not. This run: {coverage_line}"
+            f"but is not. This run: {coverage_line} "
+            f"<b>Holding the top band:</b> {_esc(findings.top_band_holding_summary())}"
         )
     else:
         banner_body = (
@@ -475,6 +489,24 @@ def render_html(payload: dict) -> str:
     expect_points = "".join(f"<li>{_esc(p)}</li>" for p in findings.key_points())
     expect_prov = _esc(findings.PROVENANCE)
     expect_cost = _esc(f"{findings.ROUND_TRIP_COST * 1e4:.0f}bps")
+
+    # ---- "What holding each band would have returned" panel -- risk-
+    # adjusted (Sharpe/Sortino) outcome of actually HOLDING a book built from
+    # each band, as opposed to the ranking-quality numbers in the banner
+    # above. Everything here is measured; the numbers and their provenance
+    # live in findings.py, never inline.
+    book_lead = _esc(findings.risk_adjusted_note())
+    book_rows_html = "".join(
+        "<tr><td>{}</td><td class=\"{}\">{}</td><td>{}</td><td>{}</td><td>{}</td>"
+        "<td>{}</td><td>{}</td></tr>".format(
+            _esc(name),
+            "neg" if ret.startswith("-") else "pos", _esc(ret),
+            _esc(vol), _esc(sharpe), _esc(sortino), _esc(mdd), _esc(win),
+        )
+        for name, ret, vol, sharpe, sortino, mdd, win in findings.book_rows()
+    )
+    book_caveats = _esc(findings.harvestability_note())
+    book_prov = _esc(findings.BOOK_PROVENANCE)
 
     # Legend substitutions for the four current bands, from the same single
     # source as the banner (findings.py). Each row's numbers come straight
@@ -874,6 +906,22 @@ def render_html(payload: dict) -> str:
     <ul class="expect-points">{expect_points}</ul>
     <p class="expect-note">Source: {expect_prov}. Round-trip cost assumed:
     {expect_cost}. Full record in RESEARCH_NOTES.md.</p>
+  </div>
+</details>
+
+<details class="expect">
+  <summary>What holding each band would have returned &mdash; measured, {findings.BOOK_MEASURED_ON}</summary>
+  <div class="expect-body">
+    <p class="expect-lead">{book_lead}</p>
+    <table class="expect-table">
+      <thead><tr><th>Book</th><th>Ann. return</th><th>Ann. vol</th><th>Sharpe</th>
+      <th>Sortino</th><th>Max drawdown</th><th>Win rate</th></tr></thead>
+      <tbody>{book_rows_html}</tbody>
+    </table>
+    <h4>Why this is a risk screen, not a portfolio</h4>
+    <p class="expect-lead">{book_caveats}</p>
+    <p class="expect-note">Source: {book_prov}. Measured {findings.BOOK_MEASURED_ON}.
+    Full record in RESEARCH_NOTES.md.</p>
   </div>
 </details>
 

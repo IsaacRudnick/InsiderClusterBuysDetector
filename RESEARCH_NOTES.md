@@ -1208,3 +1208,140 @@ What remains open:
   walk-forward folds in `tools/score_lab.py`. Anyone re-fitting on a new
   dataset should re-run `tools/ship_candidate.py` rather than assume the
   numbers above transfer.
+
+## Risk-adjusted return: the signal is real and mostly unbuyable (2026-08-20)
+
+**The methodological error being corrected.** The previous section graded
+every candidate on rank IC, which measures ORDERING. A holder does not
+experience an ordering, they experience a return stream with a
+volatility and a drawdown. Measured on Sharpe, the shipped score turns
+out to order risk-adjusted return strongly -- something the IC and
+median-excess tables could not show. New tooling: `tools/sharpe_lab.py`
+(book construction, risk metrics, and a permutation test that replays
+the WHOLE recipe search), `tools/run_sharpe_lab.py`,
+`tools/run_sharpe_search.py`, `tools/sharpe_robustness.py`,
+`tools/tradeable_universe.py`, `tools/horizon_sweep.py`,
+`tools/long_short.py`.
+
+**Sharpe by decile of the shipped score** (equal weight, non-overlapping
+21-day periods, 20bps): 0.21, 0.52, 0.26, 0.68, 0.71, 0.71, 0.81, 1.02,
+1.33, 0.69. Decile 9 falls back, consistent with the previous section.
+
+**The headline book** -- 70th-90th percentile, equal weight, 20bps, 78
+non-overlapping periods, ~23 names:
+
+| book | ann return | ann vol | Sharpe | Sortino | maxDD | win rate |
+|---|---|---|---|---|---|---|
+| top band 70-90 | +34.5% | 23.0% | 1.303 | 1.400 | -30.7% | 73% |
+| all clusters | +23.8% | 23.5% | 0.917 | 1.124 | -32.2% | 58% |
+| bottom 30% | +14.9% | 34.0% | 0.412 | 0.668 | -57.6% | 51% |
+| SPY | +18.1% | 14.1% | 1.192 | 1.125 | -19.2% | 73% |
+| IWM | +15.6% | 20.2% | 0.723 | 0.859 | -27.3% | 60% |
+
+Final multiple over the 6.5-year window: 5.77x versus SPY's 2.76x. Beat
+SPY in 4 of 7 years, and the wins are large while the losses are small
+(2022 +56.8pp when SPY was -11.7%; 2024 +32.9pp; 2025 +19.3pp; 2026
++26.4pp; losses -2.6, -4.1, -10.8pp).
+
+**Crucially, this one passes its permutation test.** The null re-runs
+the entire 132-recipe grid search (band x weighting x price floor x
+position cap) on scores shuffled within each period: null best-of-grid
+median Sharpe 0.987, 95th percentile 1.236, observed 1.303, **p =
+0.005** on the standalone run and **p = 0.000** over 120 draws in the
+candidate sweep. Why Sharpe survives where the return claim died: a
+handful of 200%+ winners inflate the mean AND the volatility, so they
+cannot inflate a ratio of the two. The return search was measuring the
+fat tail; the Sharpe search is not.
+
+**Objectives aimed explicitly at risk-adjusted return did NOT beat it.**
+Five new pre-registered candidates, each fit as a 10-seed ensemble and
+put through its own permutation test (best-of-grid Sharpe, then p):
+
+| candidate | Sharpe | ann return | maxDD | perm p |
+|---|---|---|---|---|
+| C19 (incumbent, month-and-vol-relative) | 1.303 | +34.5% | -30.7% | 0.000 |
+| S2 log excess / vol, month-relative | 1.286 | +30.1% | -26.0% | 0.033 |
+| S5 winsorized target | 1.264 | +33.0% | -31.0% | 0.033 |
+| S1 log excess / vol | 1.224 | +50.0% | -43.2% | 0.050 |
+| S3 P(beats SPY) | 1.169 | +37.7% | -33.4% | 0.092 |
+| S4 P(up in absolute terms) | 1.058 | +32.9% | -35.0% | 0.267 |
+
+Two things worth keeping: dividing the target by volatility is WORSE
+than neutralising volatility through cohort demeaning (dividing creates
+a heavy-tailed target the quantile loss then chases); and S1 has by far
+the highest return (+50%/yr, beating IWM in 7 of 7 years) at the cost of
+a -43% drawdown. Several candidates passing independently is stronger
+evidence than one search passing.
+
+**Then the implementation audit, which is where it ends.**
+
+- COST. Sharpe by round-trip cost: 0bps 1.408, 20bps 1.303, 50bps 1.147,
+  100bps 0.886, 200bps 0.365, 300bps -0.157. It stops beating SPY's
+  Sharpe somewhere under 50bps. The book rebalances ~23 microcap names
+  twelve times a year.
+- LIQUIDITY. Capping a position at 10% of the name's 20-day dollar
+  volume: $100k capital Sharpe 1.107, $1M 0.982, $5M 0.908, $25M 0.750.
+  Below SPY's 1.192 at every size tested.
+- PRICE FLOOR. $0 Sharpe 1.303 / excess +14.1%; $3 0.977 / +3.5%; $5
+  0.991 / +3.2%; $10 1.069 / +4.0%.
+- BAND EDGES. Sharpe across neighbouring cuts runs 0.94 to 1.30 with no
+  spike -- a plateau, which is the one robustness check it passes
+  cleanly.
+
+**Refitting INSIDE the tradeable universe does not rescue it.** The
+model was refit from scratch on each restricted universe rather than
+filtering at the end, because the band cuts were calibrated on a
+distribution that no longer exists once the illiquid names are removed:
+
+| universe | rows | Sharpe | SPY Sharpe | perm p |
+|---|---|---|---|---|
+| unrestricted, 20bps | 10,861 | 1.220 | 1.192 | 0.025 |
+| $1+, 50bps | 10,349 | 1.045 | 1.186 | 0.013 |
+| $5+, 50bps | 8,595 | 0.851 | 1.204 | 0.025 |
+| $5+ & $250k book, 50bps | 7,265 | 0.788 | 1.226 | 0.050 |
+| $5+ & $1M book, 50bps | 5,892 | 0.650 | 1.237 | 0.263 |
+| $5+ & $5M book, 75bps | 4,061 | 0.531 | 1.255 | 0.463 |
+| $10+ & $5M book, 75bps | 3,435 | 0.877 | 1.297 | 0.037 |
+
+Note the important nuance: the permutation p stays significant in most
+restricted universes. The score still contains real information among
+buyable names. What it does not do is produce a book that beats an
+index fund there.
+
+**Two further levers, both dead.**
+
+- HOLDING PERIOD. On the $5+/$1M universe at 50bps, longer holds raise
+  absolute Sharpe and collapse drawdown (21d Sharpe 0.650 / maxDD
+  -39.1%; 63d 1.342 / -14.6%; 126d 1.360 / -3.4%) -- but SPY's Sharpe
+  measured over those same longer periods rises too (1.237, 1.907,
+  1.572), so excess stays negative (-0.3%, -1.7%, -3.7%) and years-beat
+  falls from 4/7 to 2/7.
+- LONG/SHORT. Shorting the bottom band LOSES money: -20.6%/yr
+  standalone. The reason is worth recording -- the bottom band
+  underperforms the market but still rises in absolute terms over this
+  window, so shorting it fights the market's drift rather than
+  harvesting the signal. The market-hedged variant (long 70-90, short
+  SPY) does produce genuine near-zero-beta alpha unrestricted (+15.3%/yr,
+  Sharpe 0.821, beta 0.081, p=0.040, 4/7 years) but is below SPY's
+  Sharpe, and in the tradeable universe it returns -1.6%/yr.
+
+**New data, tested and rejected.** Earnings proximity was built
+point-in-time from SEC's submissions API (`tools/filing_calendar.py`,
+`tools/earnings_features.py`, 2,828 issuers, ~498,000 10-Q/10-K/8-K
+records, 5 new features, 92-98% coverage). Adding it moved monthly IC
+from +0.0885 to +0.0804 and vol-neutral IC from +0.0650 to +0.0638. It
+does not help. The most-flagged missing feature in this repo's own gap
+list has now been built and measured, and is not the answer.
+
+**What this means.** The score orders risk-adjusted return genuinely
+and reproducibly, and the top band beat SPY on return AND Sharpe over
+this window -- but only in a universe containing sub-$5, thinly traded
+names, at costs no one pays, at a size close to zero. Under any
+realistic constraint it lands at or below an index fund. The deliverable
+is unchanged: a screen that identifies which insider cluster buys carry
+the worst risk, not a portfolio that beats the market.
+
+Closed off: objective choice, horizon, weighting, band selection,
+long/short, earnings data, universe restriction. Remaining and
+untested: company size/valuation from XBRL, and the survivorship bound
+(33.2% of tickers unpriceable), which caps everything above.

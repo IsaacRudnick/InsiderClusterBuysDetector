@@ -17,6 +17,10 @@ ipo_cache/
 # One JSON per issuer CIK (SIC code, exchange), refilled by tools/issuer_meta.py.
 issuer_meta_cache/
 
+# SEC submissions filings, one JSON per issuer CIK (~43 MB). Rebuilt by
+# `python tools/filing_calendar.py` in about 15 minutes; not worth versioning.
+filing_cache/
+
 # ---------------------------------------------------------------------------
 # Generated outputs
 # ---------------------------------------------------------------------------
