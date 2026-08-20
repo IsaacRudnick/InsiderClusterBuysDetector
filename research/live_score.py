@@ -299,9 +299,18 @@ class FeatureAvailability:
         inputs it was never given: the screening ensemble deliberately
         excludes the 12 never-computable-live columns, so counting those
         against it would report 47/59 available for a model that had
-        everything it asked for, and would push a genuinely
-        thin cluster closer to the `unavailable` backstop for the wrong
-        reason.
+        everything it asked for, and would push a genuinely thin cluster
+        closer to the `unavailable` backstop for the wrong reason.
+
+        This applies to the RETIRED single-classifier bundles too, on purpose.
+        Those were fit on 50 of the 59 columns, so their displayed counts move
+        from "of 59" to "of 50" and the nine concurrent-selling columns drop
+        out of the reported `missing` list. That is a display change to an
+        older bundle's output, and it is the correct direction: a column the
+        model was never fit on is not a gap in the data available to it. No
+        verdict can move as a result -- an old bundle's worst case is 28 of 59
+        missing (0.475), already under the 0.5 backstop, and restricting only
+        lowers the fraction.
         """
         want = set(cols)
         return FeatureAvailability(
