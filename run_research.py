@@ -30,12 +30,13 @@ receives the exact parquet this run wrote rather than re-resolving 'latest'
 by mtime.
 
 A third stage produces the artifact the LIVE screener needs (see
-research/live_score.py), separate from the two above because it is a
-deployment artifact, not a research one, and is opt-in only -- it is NOT
-part of --all or the no-flags default, so existing callers of this script
-see no behavior change:
+research/live_score.py and research/screen_model.py), separate from the two
+above because it is a deployment artifact, not a research one, and is
+opt-in only -- it is NOT part of --all or the no-flags default, so existing
+callers of this script see no behavior change:
 
-    python run_research.py --fit-production   # reads the latest research_*.parquet, writes production_model_*.joblib
+    python run_research.py --fit-screen        # reads the latest research_*.parquet, writes screen_model_*.joblib -- the score the live screener sorts by
+    python run_research.py --fit-production    # reads the latest research_*.parquet, writes production_model_*.joblib -- the retired single-classifier score
 
 --dry-run reports what a real run would do (row counts, fold sizes, planned
 output paths) without fetching prices, fitting anything, or writing a file.
@@ -70,6 +71,7 @@ from backtest import research as research_mod
 from backtest import sales_history
 from backtest.state import DailyStateBuilder
 from research import model as rm
+from research import screen_model
 
 log = logging.getLogger("run_research")
 
@@ -124,6 +126,16 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "training-score reference distribution and provenance into "
             "production_model_*.joblib for research.live_score to consume. Opt-in "
             "only -- not part of --all or the no-flags default."
+        ),
+    )
+    p.add_argument(
+        "--fit-screen", action="store_true",
+        help=(
+            "Fit the seed ensemble research/screen_model.py documents (fit_screen_ensemble), "
+            "then bundle it via build_screen_bundle into screen_model_*.joblib for "
+            "research.live_score to consume. This is the score the live screener sorts by; "
+            "--fit-production builds the retired single-classifier bundle. Opt-in only -- "
+            "not part of --all or the no-flags default."
         ),
     )
     p.add_argument(
@@ -205,18 +217,22 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def selected_stages(args: argparse.Namespace) -> tuple[bool, bool]:
     """(do_build, do_fit). Neither --build-dataset nor --fit-model (or
     --all explicitly) means run both, in order -- UNLESS --fit-production
-    was explicitly given instead. --fit-production is opt-in only (see
-    build_arg_parser's help text) and reads an already-built research
+    or --fit-screen was explicitly given instead. Both are opt-in only (see
+    build_arg_parser's help text) and read an already-built research
     dataset; without this exception, `python run_research.py
-    --fit-production` would silently also run the full --build-dataset
-    scrape/parse and --fit-model CV (both expensive, one of them
-    network-bound) because build_dataset/fit_model were both left False --
-    exactly the "run everything" default this function documents, but not
-    what a caller asking only for --fit-production wants or expects.
-    getattr guards a caller that constructs args by hand without the
-    --fit-production attribute (e.g. an older test/script)."""
+    --fit-production` (or --fit-screen) would silently also run the full
+    --build-dataset scrape/parse and --fit-model CV (both expensive, one of
+    them network-bound) because build_dataset/fit_model were both left
+    False -- exactly the "run everything" default this function documents,
+    but not what a caller asking only for one deployment-artifact stage
+    wants or expects. getattr guards a caller that constructs args by hand
+    without the --fit-production/--fit-screen attribute (e.g. an older
+    test/script)."""
     fit_production = bool(getattr(args, "fit_production", False))
-    if args.all or (not args.build_dataset and not args.fit_model and not fit_production):
+    fit_screen = bool(getattr(args, "fit_screen", False))
+    if args.all or (
+        not args.build_dataset and not args.fit_model and not fit_production and not fit_screen
+    ):
         return True, True
     return bool(args.build_dataset), bool(args.fit_model)
 
@@ -584,6 +600,71 @@ def dry_run_fit_production(
     return report
 
 
+
+# ---------------------------------------------------------------------------
+# --fit-screen: real run
+# ---------------------------------------------------------------------------
+def run_fit_screen_stage(df: pd.DataFrame, *, out_dir: str, source_path: str) -> rm.ProductionBundle:
+    """Fit the seed ensemble research/screen_model.py documents and bundle it
+    into the file research.live_score (and this module's live counterpart,
+    insider_cluster_buys.attach_model_scores) will prefer over
+    production_model_*.joblib. See that module's docstring for why an
+    ensemble of quantile regressors, not a single classifier fit.
+
+    Unlike --fit-production this never reuses a --fit-model ValidationResult:
+    the two scores are trained on a different target (screen_target's
+    month-and-vol-relative label vs rm.LABEL_COL) and a different feature set
+    (live-computable columns only, via screen_feature_cols), so there is
+    nothing from that CV run to share.
+    """
+    t0 = time.monotonic()
+    log.info(
+        "fit-screen: fitting a %d-member quantile ensemble on %d rows",
+        screen_model.SCREEN_N_MEMBERS, len(df),
+    )
+    ensemble = screen_model.fit_screen_ensemble(df)
+    bundle = screen_model.build_screen_bundle(ensemble, df, source_path=source_path)
+    path = screen_model.default_bundle_path(len(bundle.training_scores), out_dir)
+    rm.save_production_bundle(bundle, path)
+    elapsed = time.monotonic() - t0
+    log.info(
+        "fit-screen: done in %.1fs -- %d members, %d training rows in the percentile "
+        "reference, wrote %s",
+        elapsed, len(ensemble.members), len(bundle.training_scores), path,
+    )
+    return bundle
+
+
+def dry_run_fit_screen(
+    args: argparse.Namespace, df: pd.DataFrame | None = None, dataset_path: str | None = None,
+) -> dict:
+    """Reports the dataset that would be used and the exact training-row
+    count the percentile reference distribution would have (the same
+    screen_target-notna + entry_idx filter build_screen_bundle itself
+    applies) -- no model fit, no write."""
+    if df is None:
+        resolved = dataset_path if dataset_path is not None else _resolve_latest_for_production(args.out_dir, RESEARCH_GLOB)
+        if resolved is None:
+            report = {"error": f"no dataset given and no {RESEARCH_GLOB} found in {args.out_dir}/"}
+            log.info("[dry-run] fit-screen: %s", report)
+            return report
+        dataset_path = resolved
+        df = rm.load_research_dataset(dataset_path)
+
+    y = screen_model.screen_target(df)
+    usable = y.notna() & df["entry_idx"].notna()
+    n_usable = int(usable.sum())
+    report: dict = {
+        "dataset_path": dataset_path,
+        "n_total_rows": len(df),
+        "n_training_rows_in_percentile_reference": n_usable,
+        "n_members": screen_model.SCREEN_N_MEMBERS,
+        "planned_output": screen_model.default_bundle_path(n_usable, args.out_dir),
+    }
+    log.info("[dry-run] fit-screen: %s", report)
+    return report
+
+
 def save_production_bundle_artifact(bundle: rm.ProductionBundle, out_dir: str, tag: str) -> str:
     """research_data/production_model_<tag_><n_rows>rows_<YYYYMMDD>.joblib,
     matching save_research_dataset / save_oof_scores' naming convention.
@@ -611,12 +692,13 @@ def main(argv: list[str] | None = None) -> int:
 
     do_build, do_fit = selected_stages(args)
     do_fit_production = bool(args.fit_production)  # opt-in only, see build_arg_parser's help text
+    do_fit_screen = bool(args.fit_screen)  # opt-in only, see build_arg_parser's help text
     as_of = _parse_as_of(args.as_of)
     horizons = research_mod.DEFAULT_HORIZONS
 
     log.info(
-        "run_research: build-dataset=%s fit-model=%s fit-production=%s dry-run=%s out-dir=%s tag=%r",
-        do_build, do_fit, do_fit_production, args.dry_run, args.out_dir, args.tag,
+        "run_research: build-dataset=%s fit-model=%s fit-production=%s fit-screen=%s dry-run=%s out-dir=%s tag=%r",
+        do_build, do_fit, do_fit_production, do_fit_screen, args.dry_run, args.out_dir, args.tag,
     )
 
     df_for_fit: pd.DataFrame | None = None
@@ -684,6 +766,23 @@ def main(argv: list[str] | None = None) -> int:
                 allow_never_live_features=args.allow_never_live_features,
             )
             save_production_bundle_artifact(bundle, out_dir=args.out_dir, tag=args.tag)
+
+    if do_fit_screen:
+        if args.dry_run:
+            dry_run_fit_screen(args, df=df_for_fit, dataset_path=dataset_path_for_fit)
+        else:
+            if df_for_fit is None:
+                resolved = dataset_path_for_fit or _resolve_latest_for_production(args.out_dir, RESEARCH_GLOB)
+                if resolved is None:
+                    raise SystemExit(
+                        f"fit-screen: no dataset given and no {RESEARCH_GLOB} found in "
+                        f"{args.out_dir}/. Pass --dataset-path, or run with --build-dataset first."
+                    )
+                df_for_fit = rm.load_research_dataset(resolved)
+                dataset_path_for_fit = resolved
+            run_fit_screen_stage(
+                df_for_fit, out_dir=args.out_dir, source_path=dataset_path_for_fit or "",
+            )
 
     if args.dry_run:
         log.info("run_research: dry-run complete -- nothing written.")

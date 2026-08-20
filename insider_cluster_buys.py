@@ -1017,6 +1017,14 @@ def _build_cluster(window: list[dict]) -> dict:
 # shows and how it sorts; it never touches those fields.
 # ---------------------------------------------------------------------------
 RESEARCH_DATA_DIR = "research_data"
+# Preferred first: the screening ensemble (research/screen_model.py) is the
+# score research.live_score's four verdict bands (elevated_risk / middle /
+# top_band / above_band) were measured against. Loading the other bundle
+# instead falls back to that score's own retired two-state banding, which is
+# the correct behaviour but a materially different reading of the same
+# percentile -- 95 is the best badge under one and an explicitly-not-better
+# badge under the other. Hence the warning when the fallback is what runs.
+SCREEN_MODEL_GLOB = "screen_model_*.joblib"
 PRODUCTION_MODEL_GLOB = "production_model_*.joblib"
 RESEARCH_HISTORY_GLOB = "research_*rows_*.parquet"
 
@@ -1166,26 +1174,42 @@ def attach_model_scores(clusters: list[dict]) -> dict:
     gracefully" requirement).
     """
     from research import model as rm
+    from research import screen_model
 
-    bundle_path = os.environ.get("LIVE_SCORE_MODEL_PATH") or _resolve_latest_artifact(PRODUCTION_MODEL_GLOB)
+    # SCREEN_MODEL_GLOB is tried before PRODUCTION_MODEL_GLOB -- see the
+    # comment on that constant above. LIVE_SCORE_MODEL_PATH is an explicit
+    # override and outranks both, same as it always has.
+    bundle_path = (
+        os.environ.get("LIVE_SCORE_MODEL_PATH")
+        or _resolve_latest_artifact(SCREEN_MODEL_GLOB)
+        or _resolve_latest_artifact(PRODUCTION_MODEL_GLOB)
+    )
     bundle = None
     if bundle_path and os.path.exists(bundle_path):
         try:
             bundle = rm.load_production_bundle(bundle_path)
-            log.info(
-                "Loaded production model bundle %s (%d training scores, %d features)",
-                bundle_path, len(bundle.training_scores), len(bundle.feature_cols),
-            )
+            if screen_model.is_screen_bundle(bundle):
+                log.info(
+                    "Loaded screening ensemble bundle %s (%d training scores, %d features)",
+                    bundle_path, len(bundle.training_scores), len(bundle.feature_cols),
+                )
+            else:
+                log.warning(
+                    "Loaded the retired single-classifier bundle %s (%d training scores, %d "
+                    "features) - this score was measured to rank crash risk UPWARD, not down. "
+                    "Run `python run_research.py --fit-screen` to produce the current score.",
+                    bundle_path, len(bundle.training_scores), len(bundle.feature_cols),
+                )
         except Exception as exc:
             log.warning(
-                "Could not load production model bundle %s (%s) - clusters will not be model-scored.",
+                "Could not load model bundle %s (%s) - clusters will not be model-scored.",
                 bundle_path, exc,
             )
             bundle = None
     else:
         log.warning(
-            "No production model bundle found (%s/%s) - clusters will not be model-scored.",
-            RESEARCH_DATA_DIR, PRODUCTION_MODEL_GLOB,
+            "No model bundle found (%s/%s or %s) - clusters will not be model-scored.",
+            RESEARCH_DATA_DIR, SCREEN_MODEL_GLOB, PRODUCTION_MODEL_GLOB,
         )
 
     issuer_history = None

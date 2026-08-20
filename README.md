@@ -11,10 +11,15 @@ inside a rolling window.
 
 Informational tooling, not financial advice.
 
-**The headline, up front: this is a skip list, not a pick list.** The reliable,
-repeatable result is identifying insider cluster buys to *avoid*. No
-configuration tested produced a portfolio that beat an index fund in a way
-that survived changing the model's random seed. Read
+**The headline, up front: the ranking is now real, but it is still not an
+index-beating claim.** Monthly-cohort rank IC +0.0883 (t=5.08), positive in 7
+of 7 out-of-sample years, volatility-neutral IC +0.0630 against +0.0145 for a
+plain sort-by-low-volatility ranker, decile monotonicity +0.93, and two
+disjoint 5-seed halves that rank-correlate +0.964 — this is the first score
+measured here that does not move on the RNG seed. But a 70-90th percentile
+band book that measured +19.77%/yr over SPY failed a permutation test at
+p = 0.435: re-running the same 12-band search on shuffled scores produces the
+same +18.46%/yr. What survived is the risk ordering, not a return. Read
 [Findings](#findings-read-this-before-trusting-a-number) before you believe any
 number this produces.
 
@@ -53,18 +58,25 @@ Writes to `out/`, overwritten each run:
   the file is both human- and machine-readable.
 - `insider_cluster_buys.xlsx` — Flagged Clusters / All Tx / Errors sheets.
 
-Clusters are sorted and badged by the **trained model**, not by the old
-hand-tuned `conviction_score`, which measured at zero risk-adjusted edge.
-Scoring needs a production bundle on disk (`run_research.py --fit-production`,
-below); with no bundle, rows render as `not_scored` rather than falling back
-to a score that does not work.
+Clusters are sorted and badged by the **trained model** — no longer the old
+hand-tuned `conviction_score`, which measured at zero risk-adjusted edge, and
+no longer `oof_tail_classifier`, which ranked crash risk upward (see
+Findings). The score is `research/screen_model.py`: a 10-seed ensemble of
+quantile-regression rankers, built with `python run_research.py --fit-screen`,
+which writes `research_data/screen_model_<nrows>rows_<YYYYMMDD>.joblib`. The
+screener prefers that bundle and falls back to the older single-classifier
+`production_model_*.joblib` with a warning if it is missing. With neither on
+disk, rows render as `not_scored` rather than falling back to a score that
+does not work.
 
-| Verdict | Meaning |
-|---|---|
-| `top_decile` | Percentile ≥ 90. The **most volatile** band, not the best one — measured out of sample it lost >30% in 63 days 16.8% of the time, against 2.5% for the lowest decile. Read it as "volatile", not "good". |
-| `no_edge` | Scored, below the top decile. Means "unproven", not "bad". |
-| `unavailable` | Fewer than half the model's 50 inputs could be computed. |
-| `not_scored` | No production bundle was on disk this run. |
+| Verdict | Percentile | Meaning |
+|---|---|---|
+| `top_band` | 70-90 | The best-measured band. Median -0.09% vs SPY, 49.5% win rate, 1.21% chance of losing more than 30% in 21 days. This is the top-candidates list. |
+| `above_band` | 90-100 | Scored higher, and measured WORSE than `top_band` on both median (-0.52%) and crash rate (2.97%), in 5 of 7 out-of-sample years. A higher score is not a better candidate. |
+| `middle` | 30-70 | Median -0.83%, crash rate 2.64%. |
+| `elevated_risk` | 0-30 | Median -2.68%, 43.6% win rate, and a 7.88% chance of losing more than 30% in three weeks — between 7.3% and 9.2% in every single out-of-sample year. The most durable result this project has. |
+| `unavailable` | - | Too many of the model's inputs could not be computed. |
+| `not_scored` | - | No bundle on disk this run. |
 
 Every evidence claim the dashboard makes comes from `findings.py`, which keeps
 each number next to its provenance so that correcting the research corrects the
@@ -117,12 +129,16 @@ Or skip training entirely with `BT_TRAIN=0` and backtest against whatever
 python run_research.py --build-dataset    # research_*.parquet   (one row per cluster episode)
 python run_research.py --fit-model        # oof_scores_*.parquet (purged walk-forward CV)
 python run_research.py --all              # both, in order
-python run_research.py --fit-production   # production_model_*.joblib, for the live screener
+python run_research.py --fit-screen       # screen_model_*.joblib, the score the live screener sorts by
+python run_research.py --fit-production   # production_model_*.joblib, retired single-classifier bundle
 python run_research.py --dry-run          # row counts and planned paths, writes nothing
 ```
 
-`--fit-production` is opt-in and deliberately not part of `--all`: it is a
-deployment artifact, not a research one.
+`--fit-screen` and `--fit-production` are opt-in and deliberately not part of
+`--all`: they are deployment artifacts, not research ones. `--fit-production`
+builds the retired single-classifier bundle (`oof_tail_classifier`, which
+ranked crash risk upward — see Findings) and is kept only for reproducing old
+results; the live screener no longer prefers it.
 
 Row counts between `--build-dataset` and `--fit-model` are not 1:1. The fit
 stage drops rows with no usable label or entry index, then cuts the remainder
@@ -175,6 +191,18 @@ Output lands in `out/backtest_<timestamp>/`: `report.html` plus
 `equity_*.csv` and `trades_*.csv` per strategy × exit pair. A full grid run is
 hundreds of MB.
 
+### Research: re-running the candidate sweep
+
+```
+python tools/run_score_lab.py --seeds 0,1,2      # every pre-registered candidate
+python tools/ship_candidate.py --seeds 10        # the chosen score, deep audit
+python tools/band_robustness.py                  # the audits that kill a band claim
+```
+
+Every candidate is reported, pass or fail — the 19 in `tools/run_score_lab.py`
+are all there is, and adding a 20th means re-running and re-reporting the
+whole list, not quoting the new one alone.
+
 ---
 
 ## Layout
@@ -198,6 +226,7 @@ backtest/                   the backtester's own modules
 research/                   the ranking model
   model.py                  fit_and_validate, purged walk-forward CV
   live_score.py             scores one live cluster from a production bundle
+  screen_model.py           the score the live screener sorts by
 
 tools/                      standalone CLIs, each `python tools/<name>.py`
   warm_prices               bulk-fill the price cache
@@ -206,6 +235,16 @@ tools/                      standalone CLIs, each `python tools/<name>.py`
   ensemble_model            blend model objectives
   refit_stability           re-fit under perturbation, measure retention
   objective_sweep           sweep TAIL_THRESH and objective choice
+  score_lab                 out-of-fold score construction plus the fixed
+                            pre-registered gauntlet every candidate is graded on
+  run_score_lab             the 19 pre-registered candidates and the runner
+  ship_candidate            deep audit of the chosen score against the one it
+                            replaces
+  band_backtest             which percentile band to surface, measured against
+                            SPY, IWM and IWC
+  band_robustness           the permutation, concentration, price-floor,
+                            split-half and leave-one-year-out audits that killed
+                            the band's return claim
 
 tests/                      pytest; `python -m pytest tests -q`
 ```
@@ -240,12 +279,15 @@ these invalidate the obvious reading of a report:
   indistinguishable from just owning the index. Held longer it does *worse*:
   −6.5%/yr at 21 days, −10.7%/yr at 63. The curve only slopes down, so there is
   no post-filing drift to capture.
-- **The shipped score rises with crash risk, not against it.** Pooled rank IC
-  −0.053, positive in only 1 of 7 years, and its top decile carries ~6x the
-  30%-loss rate of its bottom decile. An earlier volatility-matched test found
-  +4.74pp (p=0.004) for that same top decile; both can be true — fat right tail
-  *and* fat left tail — but the encouraging half alone is misleading. That
-  claim is retired throughout the codebase.
+- **The old shipped score ranked crash risk upward, on every horizon it was
+  graded at.** At 63 days: pooled rank IC −0.053, positive in only 1 of 7
+  years, top decile ~6x the 30%-loss rate of the bottom decile. An earlier
+  volatility-matched test found +4.74pp (p=0.004) for that same top decile;
+  both can be true — fat right tail *and* fat left tail — but the encouraging
+  half alone is misleading. Graded again at 21 days on the pre-registered
+  gauntlet built for its replacement: monthly IC −0.0368, positive in 2 of 7
+  years, volatility-neutral IC +0.0130 — below a plain sort-by-low-volatility
+  ranker. Replaced throughout the codebase.
 - **None of the obvious quality filters work.** More insiders, bigger dollar
   amounts, CEO share of buying, ten-percent-owner involvement, and reacting
   faster to a fresh filing were each tested by quartile. All flat.
@@ -257,10 +299,26 @@ these invalidate the obvious reading of a report:
   skill: small caps trailed SPY by ~6pp/yr over the measured window. Both SPY
   and IWM/IWC yardsticks are kept for that reason — reporting only the
   flattering one is benchmark shopping.
-- **A ranking that holds up does exist, but is not what runs here.** A 21-day
-  median-targeting ranker gives monotone deciles, positive in 7 of 7 years, and
-  survives a volatility-neutral audit that four higher-headline candidates
-  failed. `research/model.py` still fits against `adj_63`.
+- **A ranking that holds up now ships to the live screener.** The 21-day,
+  quantile-regression ensemble in `research/screen_model.py` gives monotone
+  deciles, positive in 7 of 7 years, and survives a volatility-neutral audit
+  that four higher-headline candidates failed. The backtester's own model,
+  `research/model.py`, still fits against `adj_63`.
+- **The top of the ranking is not the best part of it.** Decile 9 is worse
+  than decile 8 on both median and crash rate, in 5 of 7 out-of-sample years.
+  Sorting descending and taking the top N — what the old score's verdicts
+  did — lands on the wrong rows.
+- **Sector-relative training, an earlier finding, did not replicate.**
+  Month-relative alone beats it on every axis of the gauntlet.
+- **Strip the 12 price/momentum/volatility features and the ranking
+  disappears.** IC −0.004. This is price context, not evidence that insiders
+  pick well.
+- **A best-of-N band search on a fat-tailed return distribution manufactures
+  a return from noise.** The 70-90th percentile book's +19.77%/yr over SPY
+  produced a permutation-test null median of +18.46%/yr (p = 0.435) when the
+  same 12-band search ran on shuffled scores. Any band or top-N return figure
+  from this repo needs a permutation test, not just a bootstrap — the
+  bootstrap prices the sampling of periods but not the selection of the band.
 - **`conviction_score` does not rank.** No monotonicity; score −1 beats +9 and
   +10. Retained for comparison only, and gone from the dashboard.
 - **Sub-dollar lots and unadjusted splits used to decide the leaderboard.**
@@ -276,4 +334,7 @@ these invalidate the obvious reading of a report:
 Numbers above are sourced from `findings.py` (provenance:
 `research_groupE_10905rows_20260809.parquet`, 10,905 cluster episodes,
 2018-08…2026-08, expanding-window out-of-sample, measured 2026-08-13) and
-`RESEARCH_NOTES.md`.
+`RESEARCH_NOTES.md`. The `screen_model.py` gauntlet and band numbers are from
+`research_10861rows_20260813.parquet`, 9,095 scored cluster episodes,
+out-of-sample 2020-2026, measured 2026-08-20 — `RESEARCH_NOTES.md`, "A ranking
+that beats the shipped one, and a portfolio claim that dies".

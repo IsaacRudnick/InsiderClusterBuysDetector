@@ -290,6 +290,28 @@ class FeatureAvailability:
     missing: list[str]
     missing_reasons: dict[str, str]
 
+    def restricted_to(self, cols: "list[str]") -> "FeatureAvailability":
+        """The same report, counted only over the columns a model asks for.
+
+        `build_live_feature_row` always reports across all of
+        research.model.FEATURE_COLS, because it does not know which model will
+        consume the row. A model fit on a subset should not be judged on
+        inputs it was never given: the screening ensemble deliberately
+        excludes the 12 never-computable-live columns, so counting those
+        against it would report 47/59 available for a model that had
+        everything it asked for, and would push a genuinely
+        thin cluster closer to the `unavailable` backstop for the wrong
+        reason.
+        """
+        want = set(cols)
+        return FeatureAvailability(
+            computed=[c for c in self.computed if c in want],
+            missing=[c for c in self.missing if c in want],
+            missing_reasons={
+                k: v for k, v in self.missing_reasons.items() if k in want
+            },
+        )
+
     @property
     def n_total(self) -> int:
         return len(self.computed) + len(self.missing)
@@ -627,19 +649,47 @@ def score_to_percentile(raw_score: float, training_scores: np.ndarray) -> float:
 # third meaningful tier without new evidence backing it.
 # ---------------------------------------------------------------------------
 class Verdict(str, Enum):
-    TOP_DECILE = "top_decile"   # percentile >= TOP_DECILE_PERCENTILE_CUTOFF: the most volatile band, NOT a measured edge
-    NO_EDGE = "no_edge"         # everything else: the model does not reliably separate these
-    UNAVAILABLE = "unavailable"  # too many features missing, or no usable score, to render any verdict
+    # --- bands of the screening ensemble (research/screen_model.py) -------
+    TOP_BAND = "top_band"            # 70 <= pct < 90: the best-measured band
+    ABOVE_BAND = "above_band"        # pct >= 90: NOT better than TOP_BAND
+    MIDDLE = "middle"                # 30 <= pct < 70
+    ELEVATED_RISK = "elevated_risk"  # pct < 30: the durable, repeatable result
+    # --- states that are not a band --------------------------------------
+    UNAVAILABLE = "unavailable"      # too much missing to render any verdict
+    # --- retired, still emitted by an old single-classifier bundle -------
+    TOP_DECILE = "top_decile"
+    NO_EDGE = "no_edge"
 
 
-# Decile boundary: research.model's own decile analysis (DECILE_BINS=10,
-# _decile_table) buckets scores into 10 equal-count bins via qcut, so
-# "top decile" means the top 10% by score -- percentile >= 90 on the SAME
-# fixed reference distribution the decile analysis itself was measured
-# against (ProductionBundle.training_scores). This is not a separately
-# chosen threshold; it is the same cut the (now retired) +4.74pp evidence was
-# measured at, and the same cut findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE
-# reports the elevated crash rate for.
+# Band cuts for the screening ensemble. Measured out of sample on 9,095
+# cluster episodes over 2020-2026 (RESEARCH_NOTES.md, 2026-08-20), against log
+# excess over SPY 21 trading days after entry:
+#
+#   percentile   median    win rate   P(loses >30% in 21 days)
+#   0-30         -2.68%     43.6%      7.88%   <- 7.3-9.2% in EVERY year
+#   30-70        -0.83%     46.1%      2.64%
+#   70-90        -0.09%     49.5%      1.21%   <- best band on both axes
+#   90-100       -0.52%     48.1%      2.97%
+#
+# Two of these cuts are not obvious and both are deliberate.
+#
+# TOP_BAND STOPS AT 90. The top decile is NOT the best place to be -- it is
+# worse than the 70-90 band on median AND on crash rate, in 5 of 7 out-of-
+# sample years. "Sort descending, take the top N" is therefore the wrong
+# selection, which is what the previous score's top_decile badge did.
+#
+# THE BOTTOM CUT IS THE PRODUCT. The 0-30 band's crash rate is the most
+# durable number this project has produced: 7.3%-9.2% in every single year,
+# and it keeps its shape under $3 and $5 entry-price floors. Unlike the band
+# return figures, which died under a permutation test, this is a left-tail
+# frequency over thousands of rows rather than an average a few winners can
+# carry.
+TOP_BAND_LO_PERCENTILE = 70.0
+TOP_BAND_HI_PERCENTILE = 90.0
+MIDDLE_LO_PERCENTILE = 30.0
+
+# Retained so an older single-classifier bundle still bands the way it always
+# did rather than being silently reinterpreted under the new cuts.
 TOP_DECILE_PERCENTILE_CUTOFF = 90.0
 
 # Backstop only, not the primary way to reason about data quality --
@@ -658,14 +708,30 @@ DEFAULT_MAX_MISSING_FEATURE_FRAC = 0.5
 def band_verdict(
     percentile: float, availability: FeatureAvailability,
     max_missing_frac: float = DEFAULT_MAX_MISSING_FEATURE_FRAC,
+    *, screen: bool = True,
 ) -> Verdict:
+    """Place a percentile in its measured band.
+
+    `screen=False` reproduces the old two-state banding exactly, for a bundle
+    carrying the retired single classifier. The bands above were measured on
+    the screening ensemble's ordering and mean nothing applied to a different
+    score, so which banding runs follows the bundle, never a default.
+    """
     if availability.frac_missing > max_missing_frac:
         return Verdict.UNAVAILABLE
     if percentile != percentile or not math.isfinite(percentile):
         return Verdict.UNAVAILABLE
-    if percentile >= TOP_DECILE_PERCENTILE_CUTOFF:
-        return Verdict.TOP_DECILE
-    return Verdict.NO_EDGE
+    if not screen:
+        if percentile >= TOP_DECILE_PERCENTILE_CUTOFF:
+            return Verdict.TOP_DECILE
+        return Verdict.NO_EDGE
+    if percentile >= TOP_BAND_HI_PERCENTILE:
+        return Verdict.ABOVE_BAND
+    if percentile >= TOP_BAND_LO_PERCENTILE:
+        return Verdict.TOP_BAND
+    if percentile >= MIDDLE_LO_PERCENTILE:
+        return Verdict.MIDDLE
+    return Verdict.ELEVATED_RISK
 
 
 # ---------------------------------------------------------------------------
@@ -777,16 +843,35 @@ def score_live_cluster(
     meaningful states plus "unavailable".
     """
     as_of = as_of or date.today()
-    feature_row, availability = build_live_feature_row(
+    feature_row, full_availability = build_live_feature_row(
         cluster, window, prices=prices, issuer_history=issuer_history, as_of=as_of,
     )
+    # Judge availability against what THIS bundle was fit on, not against the
+    # full 59-column catalogue -- see FeatureAvailability.restricted_to.
+    availability = full_availability.restricted_to(bundle.feature_cols)
 
     X = pd.DataFrame([feature_row], columns=bundle.feature_cols).astype(float)
-    raw_score = float(
-        rm._predict_proba_positive(bundle.model, X, fallback_rate=float("nan"))[0]
-    )
+
+    # Which scorer to run follows the bundle, not a flag. A screening bundle
+    # carries an ensemble that answers to `score_rows`; the retired bundles
+    # carry a single LightGBM classifier scored through predict_proba. Getting
+    # this wrong would not raise -- it would silently band one score's
+    # percentiles with the other score's measured cuts -- so the branch is
+    # made once, here, and the same answer drives both calls below.
+    from research import screen_model as sm  # local: sm imports rm, not this
+
+    is_screen = sm.is_screen_bundle(bundle)
+    if is_screen:
+        raw_score = float(bundle.model.score_rows(X)[0])
+    else:
+        raw_score = float(
+            rm._predict_proba_positive(bundle.model, X, fallback_rate=float("nan"))[0]
+        )
     percentile = score_to_percentile(raw_score, bundle.training_scores)
-    verdict = band_verdict(percentile, availability, max_missing_frac=max_missing_frac)
+    verdict = band_verdict(
+        percentile, availability, max_missing_frac=max_missing_frac,
+        screen=is_screen,
+    )
     factors = factor_report(feature_row, availability)
 
     if availability.missing:
