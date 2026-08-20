@@ -321,6 +321,166 @@ def expectation_rows() -> list[tuple[str, str, str, str, str]]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# What a HOLDER of each band would have experienced, not just a
+# ranking-quality metric. Source for every number in this section:
+# research_10861rows_20260813.parquet, 10-seed ensemble of
+# C19_month_vol_rel_a35_live, 78 non-overlapping 21-trading-day periods,
+# equal weight, 20bps round trip. Measured 2026-08-20.
+# ---------------------------------------------------------------------------
+BOOK_PROVENANCE = (
+    "research_10861rows_20260813.parquet, 10-seed ensemble of "
+    "C19_month_vol_rel_a35_live, 78 non-overlapping 21-trading-day periods, "
+    "equal weight, 20bps round trip"
+)
+BOOK_MEASURED_ON = "2026-08-20"
+
+
+@dataclass(frozen=True)
+class BookResult:
+    """What a holder of one book (a band, the whole population, or a
+    benchmark) would have experienced over the measured window -- a
+    portfolio-outcome metric, not a ranking-quality metric like IC."""
+    name: str
+    ann_return: float
+    ann_vol: float
+    sharpe: float
+    sortino: float
+    max_drawdown: float
+    win_rate: float
+
+
+BOOK_RESULTS: tuple[BookResult, ...] = (
+    BookResult("Top band (70-90)", 0.345, 0.230, 1.303, 1.400, -0.307, 0.73),
+    BookResult("All clusters", 0.238, 0.235, 0.917, 1.124, -0.322, 0.58),
+    BookResult("Bottom 30% (elevated risk)", 0.149, 0.340, 0.412, 0.668, -0.576, 0.51),
+    BookResult("SPY", 0.181, 0.141, 1.192, 1.125, -0.192, 0.73),
+    BookResult("IWM", 0.156, 0.202, 0.723, 0.859, -0.273, 0.60),
+)
+
+# The top-band book, over the full 6.5-year window (2020-08 .. 2026-08).
+TOP_BAND_FINAL_MULTIPLE = 5.77
+SPY_FINAL_MULTIPLE = 2.76
+TOP_BAND_YEARS_BEAT_SPY = (4, 7)
+
+# Permutation test on the Sharpe statistic: the null re-runs the ENTIRE
+# 132-recipe search on shuffled scores. This is a different test, on a
+# different statistic, than TOP_BAND_PERMUTATION_P above (which tested raw
+# annualized excess RETURN and failed, p=0.435). This one, on Sharpe, passes.
+TOP_BAND_SHARPE_PERMUTATION_P = 0.005
+TOP_BAND_SHARPE_NULL_MEDIAN = 0.987
+TOP_BAND_SHARPE_NULL_P95 = 1.236
+
+# Why the two tests disagree even though they are run on the same book: a
+# fat right tail inflates the mean return AND the volatility of a
+# shuffled-score book together, so it can inflate a raw excess-return
+# statistic by chance -- but it cannot inflate a RATIO of the two the same
+# way, because the tail's contribution to the numerator is normalized by its
+# own contribution to the denominator. That is why Sharpe survives shuffling
+# where raw excess return did not.
+
+# Harvestability caveats. Every one of these MUST travel with the headline
+# Sharpe/return numbers above wherever they are shown -- this result is a
+# risk screen, not a harvestable portfolio, and these are why.
+COST_SHARPE_BY_BPS: dict[int, float] = {20: 1.303, 50: 1.147, 100: 0.886}
+# Position capped at 10% of a name's trailing 20-day dollar volume. SPY's
+# Sharpe (1.192) is above every capital size tested here.
+LIQUIDITY_SHARPE_BY_CAPITAL: dict[str, float] = {
+    "$100k": 1.107, "$1M": 0.982, "$25M": 0.750,
+}
+PRICE_FLOOR_EXCESS_BEFORE = 0.141  # annual excess over SPY, no price floor
+PRICE_FLOOR_EXCESS_AFTER = 0.032   # annual excess over SPY, $5 minimum entry price
+# Model refit inside a realistic tradeable universe ($5+ price floor, $1M
+# book, 50bps round trip) rather than the full universe measured above.
+REFIT_TRADEABLE_UNIVERSE_SHARPE = 0.650
+REFIT_TRADEABLE_UNIVERSE_SPY_SHARPE = 1.237
+
+
+def book_rows() -> list[tuple[str, str, str, str, str, str, str]]:
+    """(book, ann return, ann vol, Sharpe, Sortino, max drawdown, win rate)
+    as display strings, in BOOK_RESULTS order."""
+    return [
+        (
+            b.name,
+            f"{b.ann_return * 100:+.1f}%",
+            f"{b.ann_vol * 100:.1f}%",
+            f"{b.sharpe:.3f}",
+            f"{b.sortino:.3f}",
+            f"{b.max_drawdown * 100:.1f}%",
+            f"{b.win_rate * 100:.0f}%",
+        )
+        for b in BOOK_RESULTS
+    ]
+
+
+def risk_adjusted_note() -> str:
+    """The headline sentence for this section: the top band DID beat SPY on
+    a risk-adjusted basis this time, and that result passes a permutation
+    test where the earlier raw-return claim failed -- with the mechanism."""
+    top = next(b for b in BOOK_RESULTS if b.name == "Top band (70-90)")
+    spy = next(b for b in BOOK_RESULTS if b.name == "SPY")
+    yrs, yrs_tot = TOP_BAND_YEARS_BEAT_SPY
+    return (
+        f"Over this window, a top-band-only book returned {top.ann_return * 100:+.1f}%/yr "
+        f"(Sharpe {top.sharpe:.2f}, Sortino {top.sortino:.2f}) against SPY's "
+        f"{spy.ann_return * 100:+.1f}%/yr (Sharpe {spy.sharpe:.2f}) -- a "
+        f"{TOP_BAND_FINAL_MULTIPLE:.2f}x final multiple against SPY's "
+        f"{SPY_FINAL_MULTIPLE:.2f}x, beating SPY in {yrs} of {yrs_tot} years. "
+        f"This Sharpe result passes a permutation test (p={TOP_BAND_SHARPE_PERMUTATION_P:.3f}; "
+        f"null median {TOP_BAND_SHARPE_NULL_MEDIAN:.3f}, 95th percentile "
+        f"{TOP_BAND_SHARPE_NULL_P95:.3f}) -- unlike the raw annualized-excess-return "
+        f"claim above, which failed the same style of test "
+        f"(TOP_BAND_PERMUTATION_P={TOP_BAND_PERMUTATION_P:.3f}). The two disagree because a "
+        "fat right tail inflates mean return and volatility together, so it can "
+        "inflate a raw return statistic by chance but not a ratio of the two."
+    )
+
+
+def harvestability_note() -> str:
+    """Why this is a risk screen, not a portfolio: cost, liquidity, price
+    floor, and refit-instability caveats, all in one place."""
+    bps_20, bps_50, bps_100 = (
+        COST_SHARPE_BY_BPS[20], COST_SHARPE_BY_BPS[50], COST_SHARPE_BY_BPS[100]
+    )
+    liq_100k, liq_1m, liq_25m = (
+        LIQUIDITY_SHARPE_BY_CAPITAL["$100k"], LIQUIDITY_SHARPE_BY_CAPITAL["$1M"],
+        LIQUIDITY_SHARPE_BY_CAPITAL["$25M"],
+    )
+    return (
+        f"Cost: Sharpe falls below SPY's somewhere under 50bps round trip "
+        f"({bps_20:.3f} at 20bps, {bps_50:.3f} at 50bps, {bps_100:.3f} at 100bps). "
+        f"Liquidity: capping a position at 10% of a name's 20-day dollar volume gives "
+        f"Sharpe {liq_100k:.3f} at $100k of capital, {liq_1m:.3f} at $1M, "
+        f"{liq_25m:.3f} at $25M -- below SPY at every size tested. "
+        f"Price floor: with a $5 minimum entry price, excess over SPY falls from "
+        f"{PRICE_FLOOR_EXCESS_BEFORE * 100:+.1f}%/yr to {PRICE_FLOOR_EXCESS_AFTER * 100:+.1f}%/yr. "
+        f"Refit: rebuilding the model inside a tradeable universe ($5+, $1M book, "
+        f"50bps) gives Sharpe {REFIT_TRADEABLE_UNIVERSE_SHARPE:.3f} against SPY's "
+        f"{REFIT_TRADEABLE_UNIVERSE_SPY_SHARPE:.3f}. Max drawdown is worse than SPY's too "
+        "(-30.7% vs -19.2%). Treat this as a risk screen, not a portfolio: the top "
+        "band beat SPY only in a universe that includes sub-$5, thinly-traded names "
+        "at costs and account sizes that make it unrealistic to actually harvest."
+    )
+
+
+def top_band_holding_summary() -> str:
+    """One-line summary for the model banner: top band's Sharpe and
+    annualized return, with the harvestability caveat in the SAME sentence
+    -- never the return alone. See risk_adjusted_note()/harvestability_note()
+    for the full picture."""
+    top = next(b for b in BOOK_RESULTS if b.name == "Top band (70-90)")
+    spy = next(b for b in BOOK_RESULTS if b.name == "SPY")
+    return (
+        f"A top-band-only book measured {top.ann_return * 100:+.1f}%/yr (Sharpe "
+        f"{top.sharpe:.2f}) against SPY's {spy.ann_return * 100:+.1f}%/yr (Sharpe "
+        f"{spy.sharpe:.2f}) and passes a permutation test "
+        f"(p={TOP_BAND_SHARPE_PERMUTATION_P:.3f}) -- but that edge requires "
+        "sub-$5, thinly-traded names, and disappears under realistic cost, "
+        "liquidity, and price-floor limits, so it is a risk screen, not a "
+        "harvestable portfolio (see the panel below)."
+    )
+
+
 def key_points() -> list[str]:
     """The short list a user should read before acting on this dashboard."""
     best = HORIZON_EXPECTATIONS[0]
