@@ -1115,8 +1115,14 @@ def score_clusters_with_model(
 
     from research import live_score as ls
 
-    n_top_decile = 0
-    n_unavailable = 0
+    # Counted per verdict rather than as one "good" tally: the current score
+    # emits four bands and the retired one emits two, and which set appears
+    # follows the bundle that loaded. A hardcoded counter for either set would
+    # silently read zero under the other -- which is exactly what happened to
+    # this log line when the score was replaced.
+    from collections import Counter
+
+    verdict_counts: "Counter[str]" = Counter()
     n_ok = 0
     for c in clusters:
         window = c.get("transactions") or []
@@ -1151,14 +1157,13 @@ def score_clusters_with_model(
             ],
         }
         n_ok += 1
-        if result.verdict.value == "top_decile":
-            n_top_decile += 1
-        elif result.verdict.value == "unavailable":
-            n_unavailable += 1
+        verdict_counts[result.verdict.value] += 1
 
     log.info(
-        "Model-scored %d/%d cluster(s): %d top-decile, %d unavailable/degraded verdict",
-        n_ok, len(clusters), n_top_decile, n_unavailable,
+        "Model-scored %d/%d cluster(s): %s",
+        n_ok, len(clusters),
+        ", ".join(f"{n} {v}" for v, n in sorted(verdict_counts.items()))
+        or "none",
     )
 
 
@@ -1589,11 +1594,38 @@ def main() -> None:
     print(f"Done. {len(clusters)} flagged cluster(s) across {len(qualifying)} qualifying tx.")
     if model_info.get("model_available"):
         n_scored = sum(1 for c in clusters if c.get("model_score"))
-        n_top_decile = sum(1 for c in clusters if (c.get("model_score") or {}).get("verdict") == "top_decile")
-        crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
-        print(f"  Model:     {n_scored}/{len(clusters)} scored, {n_top_decile} in the "
-              f"top decile ({crash_hi:.0f}% historical 30%-loss rate -- highest risk, "
-              f"not best)")
+        verdicts = [
+            (c.get("model_score") or {}).get("verdict") for c in clusters
+        ]
+        print(f"  Model:     {n_scored}/{len(clusters)} scored")
+
+        # Which summary to print follows the verdicts that were actually
+        # emitted, not a constant in findings.py. A retired bundle bands into
+        # top_decile/no_edge and never produces a top_band row, so keying off
+        # findings (which always defines the current bands) would print zeros
+        # for a run that scored perfectly well under the older score.
+        current = {"top_band", "above_band", "middle", "elevated_risk"}
+        if current & set(v for v in verdicts if v):
+            top = findings.BANDS_BY_VERDICT["top_band"]
+            risk = findings.BANDS_BY_VERDICT["elevated_risk"]
+            n_top = sum(1 for v in verdicts if v == "top_band")
+            n_risk = sum(1 for v in verdicts if v == "elevated_risk")
+            # The count to look at, then the count to avoid, in that order.
+            # The avoid count is the one with durable evidence behind it.
+            print(f"  Top band:  {n_top} in the 70th-90th percentile -- the "
+                  f"best-measured band ({top.p_loses_30pct * 100:.1f}% "
+                  f"historical 30%-loss rate over 21 days)")
+            print(f"  Avoid:     {n_risk} in the bottom 30% "
+                  f"({risk.p_loses_30pct * 100:.1f}% historical 30%-loss rate, "
+                  f"and 7.3-9.2% in every year measured)")
+        else:
+            n_old = sum(1 for v in verdicts if v == "top_decile")
+            crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
+            print(f"  Retired score in use -- {n_old} in its top decile "
+                  f"({crash_hi:.0f}% historical 30%-loss rate; highest risk, "
+                  f"not best).")
+            print("  Run `python run_research.py --fit-screen` for the "
+                  "current score.")
     else:
         print("  Model:     no production model bundle found -- clusters are unscored")
     print(f"  Excel:     {xlsx_path}")
@@ -1604,7 +1636,7 @@ def main() -> None:
     best = findings.HORIZON_EXPECTATIONS[0]
     print()
     print("  " + "-" * 68)
-    print(f"  {findings.headline()}")
+    print(f"  {findings.band_headline()}")
     print(f"  Held ~{best.trading_days} trading days, the average flagged cluster has "
           f"historically returned")
     print(f"  {best.vs_iwm * 100:+.1f}%/yr vs a small-cap index fund and "
