@@ -109,17 +109,104 @@ SHIPPED_MODEL_CRASH_RATE_BY_DECILE: tuple[float, ...] = (
 SHIPPED_MODEL_POOLED_IC = -0.053
 SHIPPED_MODEL_YEARS_POSITIVE = (1, 7)
 
-# The ranking that DOES hold up, for reference. Not yet shipped: it is a
-# 21-day quantile-regression ranker and research/model.py still fits against
-# adj_63. Recorded here so the dashboard can describe what "reliable" would
-# look like and not overclaim for what is currently running.
-RELIABLE_RANKER_AVAILABLE = False
+# RETIRED 2026-08-20. The single-cutoff "top_decile"/"no_edge" verdict this
+# section describes has been replaced product-wide by the four-band verdict
+# below (BANDS). SHIPPED_MODEL_* is kept, unedited, only so build_html.py can
+# still render a "top_decile"/"no_edge" verdict if an old score bundle is
+# ever loaded -- do not use these numbers for anything new.
+
+# The ranking that DOES hold up, now SHIPPED. It was a 21-day
+# quantile-regression / month-cohort ranker, not yet running when this note
+# was first written; as of 2026-08-20 it IS what is running here, as
+# C19_month_vol_rel_a35_live, rendered as the four bands below (BANDS).
+RELIABLE_RANKER_AVAILABLE = True
 RELIABLE_RANKER_NOTE = (
     "A 21-day median-targeting ranker does hold up out of sample (monotone "
     "deciles, positive in 7 of 7 years, survives a volatility-neutral audit "
-    "that four higher-headline candidates failed). It is NOT what is running "
-    "here -- see RESEARCH_NOTES.md."
+    "that four higher-headline candidates failed). As of 2026-08-20 this IS "
+    "what is running here -- see BANDS and the *_SCORE_* constants below."
 )
+
+# ---------------------------------------------------------------------------
+# The live score's new banded verdict (research/live_score.py's Verdict
+# enum). Replaces the retired top_decile/no_edge cutoff above. Source for
+# every number in this section: measured out of sample, 2026-08-20, on
+# 9,095 cluster episodes (2020-2026), log excess over SPY 21 trading days
+# after entry, research_10861rows_20260813.parquet, a 10-seed ensemble of
+# C19_month_vol_rel_a35_live.
+# ---------------------------------------------------------------------------
+BAND_PROVENANCE = (
+    "research_10861rows_20260813.parquet, 9,095 cluster episodes, "
+    "2020-2026, log excess over SPY at 21 trading days, out-of-sample"
+)
+BAND_MEASURED_ON = "2026-08-20"
+BAND_MODEL_NAME = "C19_month_vol_rel_a35_live (10-seed ensemble)"
+
+
+@dataclass(frozen=True)
+class Band:
+    """One row of the live screener's banded verdict. `verdict` matches
+    research/live_score.py's Verdict enum value exactly."""
+    verdict: str
+    label: str
+    pctl_lo: float
+    pctl_hi: float
+    median_excess: float  # median 21-day log excess vs SPY
+    win_rate: float
+    p_loses_30pct: float  # P(loses more than 30% within 21 days)
+
+
+# Percentile is against the model's own training-score distribution, low to
+# high. Note the shape: measured risk falls from elevated_risk to top_band,
+# then rises again in above_band -- a higher percentile is NOT a better
+# candidate past the 70-90 mark. That non-monotonicity is the whole reason
+# this ships as four bands and not "sort by percentile descending", which is
+# exactly what the retired score above did.
+BANDS: tuple[Band, ...] = (
+    Band("elevated_risk", "Elevated risk", 0, 30, -0.0268, 0.436, 0.0788),
+    Band("middle", "Middle", 30, 70, -0.0083, 0.461, 0.0264),
+    Band("top_band", "Top band", 70, 90, -0.0009, 0.495, 0.0121),
+    Band("above_band", "Above band", 90, 100, -0.0052, 0.481, 0.0297),
+)
+BANDS_BY_VERDICT: dict[str, "Band"] = {b.verdict: b for b in BANDS}
+
+# New score's quality, for the banner. Monthly-cohort IC (grouped by entry
+# month so no single high-volume month dominates), against forward 21-day
+# log excess over SPY.
+NEW_SCORE_MONTHLY_IC = 0.0883
+NEW_SCORE_IC_T = 5.08
+NEW_SCORE_IC_CI = (0.0537, 0.1196)
+NEW_SCORE_YEARS_POSITIVE = (7, 7)
+NEW_SCORE_VOL_NEUTRAL_IC = 0.0630
+LOW_VOL_RANKER_VOL_NEUTRAL_IC = 0.0145  # plain sort-by-low-volatility, same test
+NEW_SCORE_DECILE_MONOTONICITY = 0.93
+
+# The score this replaces (the retired top_decile/no_edge verdict),
+# re-measured on the SAME monthly-cohort / volatility-neutral methodology as
+# the new score above, for a fair comparison. (SHIPPED_MODEL_POOLED_IC above
+# is an earlier, pooled-IC measurement of that same old score and is kept
+# only for legacy verdict rendering -- the two are not the same number.)
+PREV_SCORE_MONTHLY_IC = -0.0368
+PREV_SCORE_YEARS_POSITIVE = (2, 7)
+PREV_SCORE_VOL_NEUTRAL_IC = 0.0130  # below LOW_VOL_RANKER_VOL_NEUTRAL_IC
+PREV_SCORE_CRASH_RATE_BOTTOM_TO_TOP_DECILE = (0.029, 0.071)
+
+# The single most durable number this project has produced: the
+# elevated-risk band's chance of a >30% loss within 21 days, by out-of-sample
+# year. Never below 7.3%, never above 9.2%, in any of the 7 years measured.
+ELEVATED_RISK_CRASH_RATE_RANGE = (0.073, 0.092)
+ELEVATED_RISK_CRASH_RATE_BY_YEAR: dict[int, float] = {
+    2020: 0.0807, 2021: 0.0791, 2022: 0.0745, 2023: 0.0731,
+    2024: 0.0922, 2025: 0.0737, 2026: 0.0766,
+}
+
+# A 70-90 (top_band) book looked like an index-beater and was not: it
+# measured +19.77%/yr over SPY, then failed a permutation test -- re-running
+# the same band search on randomly shuffled scores produces a result this
+# large or larger 43.5% of the time. Kept here so the product never states an
+# index-beating claim from this ranking.
+TOP_BAND_ANNUALIZED_EXCESS = 0.1977
+TOP_BAND_PERMUTATION_P = 0.435
 
 # Survivorship, re-measured on the current events file. Stated in the
 # product because it caps how much any absolute number here can be trusted.
@@ -135,10 +222,91 @@ ROUND_TRIP_COST = 0.0020
 
 
 def headline() -> str:
-    """One sentence, for a console line or a banner title."""
+    """One sentence, for a console line or a banner title. Describes the
+    WHOLE POPULATION of cluster buys regardless of score -- see band_headline()
+    for the sentence about what the model's own ranking means."""
     return (
         "This is a skip list, not a pick list: the reliable result is which "
         "insider buys to avoid, not which to buy."
+    )
+
+
+def band_headline() -> str:
+    """One plain, non-technical sentence about what the banded score means.
+    For the model banner -- see headline() for the population-level line."""
+    return (
+        "This ranking reliably identifies which insider cluster buys have "
+        "historically gone wrong most often. It does NOT identify which "
+        "ones go up."
+    )
+
+
+def band_rows() -> list[tuple[str, str, str, str, str]]:
+    """(band, percentile, median excess, win rate, P(loses >30%)) as display
+    strings, in the product's own sort order: top_band, above_band, middle,
+    elevated_risk (see build_html._VERDICT_SORT_RANK)."""
+    order = ("top_band", "above_band", "middle", "elevated_risk")
+    return [
+        (
+            BANDS_BY_VERDICT[v].label,
+            f"{BANDS_BY_VERDICT[v].pctl_lo:.0f}-{BANDS_BY_VERDICT[v].pctl_hi:.0f}",
+            f"{BANDS_BY_VERDICT[v].median_excess * 100:+.2f}%",
+            f"{BANDS_BY_VERDICT[v].win_rate * 100:.1f}%",
+            f"{BANDS_BY_VERDICT[v].p_loses_30pct * 100:.2f}%",
+        )
+        for v in order
+    ]
+
+
+def new_score_quality_note() -> str:
+    """Score-quality sentence for the banner -- monthly-cohort IC, years
+    positive, volatility-neutral IC vs a low-vol ranker, decile monotonicity."""
+    lo, hi = NEW_SCORE_IC_CI
+    yrs_pos, yrs_tot = NEW_SCORE_YEARS_POSITIVE
+    return (
+        f"Measured out of sample: monthly-cohort rank correlation with forward "
+        f"return {NEW_SCORE_MONTHLY_IC:+.4f} (t={NEW_SCORE_IC_T:.2f}, 95% CI "
+        f"[{lo:+.4f}, {hi:+.4f}]), positive in {yrs_pos} of {yrs_tot} "
+        f"out-of-sample years, volatility-neutral IC {NEW_SCORE_VOL_NEUTRAL_IC:+.4f} "
+        f"against {LOW_VOL_RANKER_VOL_NEUTRAL_IC:+.4f} for a plain "
+        f"sort-by-low-volatility ranker, decile monotonicity "
+        f"{NEW_SCORE_DECILE_MONOTONICITY:.2f}."
+    )
+
+
+def prev_score_contrast_note() -> str:
+    """Contrast sentence: how the retired score scored on this same test."""
+    yrs_pos, yrs_tot = PREV_SCORE_YEARS_POSITIVE
+    lo, hi = PREV_SCORE_CRASH_RATE_BOTTOM_TO_TOP_DECILE
+    return (
+        f"The score it replaces measured monthly IC {PREV_SCORE_MONTHLY_IC:+.4f}, "
+        f"positive in {yrs_pos} of {yrs_tot} years, volatility-neutral IC "
+        f"{PREV_SCORE_VOL_NEUTRAL_IC:+.4f} (below the low-vol ranker), and its "
+        f"crash rate rose {lo * 100:.1f}% to {hi * 100:.1f}% from bottom decile "
+        "to top."
+    )
+
+
+def elevated_risk_crash_note() -> str:
+    """The durable number: elevated-risk band crash rate, every year."""
+    lo, hi = ELEVATED_RISK_CRASH_RATE_RANGE
+    n_years = len(ELEVATED_RISK_CRASH_RATE_BY_YEAR)
+    return (
+        f"The elevated-risk band's chance of losing more than 30% within 21 "
+        f"days stayed between {lo * 100:.1f}% and {hi * 100:.1f}% in every one "
+        f"of the {n_years} out-of-sample years measured -- the most durable "
+        "number this project has produced."
+    )
+
+
+def top_band_permutation_note() -> str:
+    """Why no index-beating claim is made, even though the top band looks
+    good in the table above."""
+    return (
+        f"A top-band-only book measured {TOP_BAND_ANNUALIZED_EXCESS * 100:+.2f}%/yr "
+        f"over SPY, then failed a permutation test (p={TOP_BAND_PERMUTATION_P:.3f} "
+        "-- re-running the same band search on shuffled scores produces a result "
+        "this large nearly as often as not). No index-beating claim is made."
     )
 
 
@@ -156,7 +324,7 @@ def expectation_rows() -> list[tuple[str, str, str, str, str]]:
 def key_points() -> list[str]:
     """The short list a user should read before acting on this dashboard."""
     best = HORIZON_EXPECTATIONS[0]
-    lo, hi = SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0], SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1]
+    crash_lo, crash_hi = ELEVATED_RISK_CRASH_RATE_RANGE
     return [
         "The cluster-buy event itself is not a buy signal. Held about two "
         f"weeks, the average flagged cluster returns {best.vs_iwm * 100:+.1f}%/yr "
@@ -171,10 +339,14 @@ def key_points() -> list[str]:
         "dollar amounts, CEO participation and ten-percent-owner involvement "
         "were all tested and all came back flat.",
 
-        f"The score shown here rises with crash risk, not against it. In "
-        f"backtesting, the highest-scoring decile had a {hi * 100:.0f}% chance "
-        f"of losing more than 30% in 63 days, against {lo * 100:.0f}% for the "
-        "lowest-scoring decile. Treat a high score as 'volatile', not 'good'.",
+        "The score shown here is banded, not a straight ranking -- a higher "
+        "percentile is not a better candidate. The bottom 30% ('elevated "
+        f"risk') reliably has the highest chance of a large loss, between "
+        f"{crash_lo * 100:.1f}% and {crash_hi * 100:.1f}% in every out-of-sample "
+        "year measured. The 70th-90th percentile ('top band') is the "
+        "best-measured band, but a book built only from it failed a "
+        "permutation test, so treat this as a guide to what to AVOID, not "
+        "a stock-picking signal.",
 
         f"About {SURVIVORSHIP['frac_tickers_unpriceable'] * 100:.0f}% of the "
         "companies in the historical data have no price history at all, "

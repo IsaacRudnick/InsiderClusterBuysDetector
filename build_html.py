@@ -30,24 +30,33 @@ payload reaches render_html):
                    "description", "available"}, ...],
     }
 
-`verdict` is one of "top_decile" / "no_edge" / "unavailable" (see
-research/live_score.py's Verdict enum); a cluster whose model_score is None
-was never scored at all (no production bundle on disk this run) and is
-rendered as "not_scored". This module never renders a smoothed 0-100
-confidence number: see model_sort_key, factor_favorable, and the
-always-visible <section class="model-banner"> in render_html.
+`verdict` is one of "top_band" / "above_band" / "middle" / "elevated_risk" /
+"unavailable" (see research/live_score.py's Verdict enum and its
+band_verdict function); a cluster whose model_score is None was never scored
+at all (no production bundle on disk this run) and is rendered as
+"not_scored". Two more values, "top_decile" and "no_edge", are RETIRED but
+still rendered if an old score bundle is ever loaded (see VERDICT_LABELS,
+_VERDICT_SORT_RANK, the .verdict-top_decile/.verdict-no_edge CSS, and the
+retirement branch in _percentile_sentence). This module never renders a
+smoothed 0-100 confidence number: see model_sort_key, factor_favorable, and
+the always-visible <section class="model-banner"> in render_html.
 
-WHAT THE BANNER SAYS AND WHY IT CHANGED. This docstring, and the banner
-itself, used to assert that "top_decile" carried a measured
-volatility-matched edge of +4.74pp (p=0.004, 4/5 folds). Later work
-contradicted that: the same shipped score has pooled rank IC -0.053 against
-forward return, is positive in only 1 of 7 years, and its top decile carries
-about 6x the 30%-loss rate of its bottom decile. Both results can hold at
-once -- a fat right tail and a fat left tail -- but a product reporting only
-the encouraging half misleads. Every claim the banner now makes comes from
-findings.py, which holds the numbers next to their provenance so
-that correcting the research corrects the product. Do not hard-code an
-evidence claim in this file again.
+WHAT THE BANNER SAYS AND WHY IT CHANGED (twice now). This docstring, and the
+banner itself, first asserted that "top_decile" carried a measured
+volatility-matched edge of +4.74pp (p=0.004, 4/5 folds); that was
+contradicted by later work (pooled rank IC -0.053, positive in only 1 of 7
+years, top decile ~6x its bottom decile's 30%-loss rate) and the two-verdict
+top_decile/no_edge system was retired outright. It has been replaced by the
+four-band verdict above, which measures BOTH better (monthly IC +0.0883,
+positive in 7 of 7 years) AND non-monotonic risk by percentile (elevated_risk
+at the bottom is the durable, worst band; top_band at 70-90 is the
+best-measured; above_band at 90-100 is explicitly worse than top_band, not
+better). Even the best band does not support an index-beating claim -- a
+top_band-only book failed a permutation test (findings.TOP_BAND_PERMUTATION_P
+= 0.435). Every claim the banner and legend make comes from findings.py,
+which holds the numbers next to their provenance so that correcting the
+research corrects the product. Do not hard-code an evidence claim in this
+file again.
 """
 
 import html
@@ -147,6 +156,13 @@ def _count_color(n: int) -> str:
 # was retired) this all rests on, and findings.py for the live numbers.
 # ---------------------------------------------------------------------------
 VERDICT_LABELS: dict[str, str] = {
+    "top_band": "Top band",
+    "above_band": "Above band",
+    "middle": "Middle",
+    "elevated_risk": "Elevated risk",
+    # RETIRED verdicts. A score bundle built before the four-band verdict
+    # shipped can still emit these -- keep them rendering rather than fall
+    # back to "Not scored" for old data.
     "top_decile": "Top decile — most volatile",
     "no_edge": "No measured edge",
     "unavailable": "Unavailable (too few features)",
@@ -246,7 +262,33 @@ def _percentile_sentence(percentile, n_training, verdict: Optional[str]) -> str:
         return "No percentile available -- this cluster was not model-scored."
     n_str = f"{int(n_training):,}" if n_training else None
     base = f"{pf:.0f}th percentile" + (f" of {n_str} historical cluster buys" if n_str else "")
+    band = findings.BANDS_BY_VERDICT.get(verdict)
+    if band is not None:
+        if verdict == "elevated_risk":
+            lo, hi = findings.ELEVATED_RISK_CRASH_RATE_RANGE
+            return (
+                f"{base}. This is the elevated-risk band: it has the highest "
+                f"measured chance of a large loss, between {lo * 100:.1f}% and "
+                f"{hi * 100:.1f}% chance of losing more than 30% within 21 days "
+                "in every out-of-sample year measured."
+            )
+        if verdict == "middle":
+            return f"{base}. This is the middle band -- no strong signal either way."
+        if verdict == "top_band":
+            return (
+                f"{base}. This is the top band, the best-measured band "
+                f"(median 21-day excess return {band.median_excess * 100:+.2f}%, "
+                f"{band.win_rate * 100:.1f}% win rate). It is NOT an "
+                "index-beating signal -- see the legend above."
+            )
+        if verdict == "above_band":
+            return (
+                f"{base}. A higher percentile is not a better candidate: this "
+                "band measures worse than the top band, not better -- see the "
+                "legend above."
+            )
     if verdict == "top_decile":
+        # RETIRED verdict, kept only so an old score bundle still renders.
         top_pct = max(100.0 - pf, 0.0)
         crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
         crash_lo = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0] * 100
@@ -259,22 +301,49 @@ def _percentile_sentence(percentile, n_training, verdict: Optional[str]) -> str:
     return f"{base} — no measured edge at this level (see the legend above)."
 
 
-_VERDICT_SORT_RANK = {"top_decile": 0, "no_edge": 1, "unavailable": 2}
+# Sort rank for each verdict, lowest first.
+#
+# The RETIRED verdicts (top_decile, no_edge -- see findings.py) keep their own
+# ranks rather than being lumped in with "unavailable". A single run loads a
+# single bundle, so the retired pair and the current four can never appear in
+# the same list; dropping the retired ranks would not blend the two orderings,
+# it would flatten every row of an old-bundle run into one undifferentiated
+# block and lose the ordering that run does legitimately have. They are
+# interleaved at the ranks their old two-state banding implied.
+_VERDICT_SORT_RANK = {
+    "top_band": 0,
+    "top_decile": 0,   # retired; the old bundle's "sort these first" state
+    "above_band": 1,
+    "middle": 2,
+    "no_edge": 2,      # retired; the old bundle's "everything else" state
+    "elevated_risk": 3,
+    "unavailable": 4,
+}
+_NOT_SCORED_RANK = 5
 
 
 def model_sort_key(cluster: dict):
-    """Default cluster ordering: the top_decile band first (ranked by
-    percentile -- the one band where finer ordering is at least
-    directionally supported by the evidence), then no-measured-edge
-    clusters (percentile is still honest information, just not a proven
-    ranking signal outside the top decile, so it is used only as a mild
-    tiebreak here -- never displayed as a "confidence" number), then
-    feature-starved/unavailable clusters, then unscored ones last. Total $
-    value is the final tiebreak, matching the pre-model sort's own tiebreak."""
+    """Default cluster ordering: top_band, then above_band, then middle,
+    then elevated_risk, then unavailable, then not_scored last.
+
+    WHY top_band outranks above_band even though above_band has the HIGHER
+    percentile: a higher percentile is not a better candidate -- that is the
+    whole point of shipping four bands instead of "sort by percentile
+    descending". The retired score (findings.PREV_SCORE_*) had risk rising
+    roughly monotonically with percentile, so descending-percentile was at
+    least directionally defensible for it. The current score's risk is NOT
+    monotonic in percentile -- it falls from elevated_risk to top_band, then
+    rises again in above_band (findings.BANDS) -- so sorting purely by
+    percentile would put the worse above_band ahead of the better top_band.
+
+    Within a band, percentile is still used as a tiebreak: it is honest
+    information about where a cluster sits within its own band, just not a
+    signal to sort ACROSS bands by. Total $ value is the final tiebreak,
+    matching the pre-model sort's own tiebreak."""
     ms = cluster.get("model_score")
     total_value = float(cluster.get("total_value") or 0)
     if not ms:
-        return (3, 0.0, -total_value)
+        return (_NOT_SCORED_RANK, 0.0, -total_value)
     verdict = ms.get("verdict")
     percentile = ms.get("percentile")
     try:
@@ -283,7 +352,7 @@ def model_sort_key(cluster: dict):
             percentile = -1.0
     except (TypeError, ValueError):
         percentile = -1.0
-    rank = _VERDICT_SORT_RANK.get(verdict, 3)
+    rank = _VERDICT_SORT_RANK.get(verdict, _VERDICT_SORT_RANK["unavailable"])
     return (rank, -percentile, -total_value)
 
 
@@ -303,8 +372,8 @@ def render_html(payload: dict) -> str:
                 pass
 
     n_scored = sum(1 for c in clusters if c.get("model_score"))
-    n_top_decile = sum(
-        1 for c in clusters if (c.get("model_score") or {}).get("verdict") == "top_decile"
+    n_top_band = sum(
+        1 for c in clusters if (c.get("model_score") or {}).get("verdict") == "top_band"
     )
 
     summary = {
@@ -317,7 +386,7 @@ def render_html(payload: dict) -> str:
         "generated_at": payload.get("generated_at", ""),
         "qualifying_codes": ", ".join(payload.get("qualifying_codes", []) or []),
         "model_scored": f"{n_scored}/{len(clusters)}" if clusters else "0/0",
-        "top_decile": str(n_top_decile),
+        "top_band": str(n_top_band),
     }
 
     # ---- "What this ranking means" banner -- always visible, not tucked
@@ -346,19 +415,17 @@ def render_html(payload: dict) -> str:
         else:
             coverage_bits.append("no issuer-history reference frame — issuer-history features unavailable this run")
         coverage_line = "; ".join(coverage_bits) + "."
-        yrs_pos, yrs_tot = findings.SHIPPED_MODEL_YEARS_POSITIVE
-        crash_lo = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0] * 100
-        crash_hi = findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100
         banner_body = (
-            f"<b>{_esc(findings.headline())}</b> "
-            f"Clusters below are ranked by a trained model's percentile against "
-            f"{n_training:,} historical cluster buys. <b>A high percentile here means "
-            f"&ldquo;volatile,&rdquo; not &ldquo;good.&rdquo;</b> Measured out of "
-            f"sample, this score's rank correlation with forward return is "
-            f"{findings.SHIPPED_MODEL_POOLED_IC:+.3f} — positive in only {yrs_pos} of "
-            f"{yrs_tot} years — and its highest-scoring decile lost more than 30% in "
-            f"63 days {crash_hi:.0f}% of the time against {crash_lo:.0f}% for its "
-            f"lowest-scoring decile. Use the ranking to decide what to LEAVE ALONE. "
+            f"<b>{_esc(findings.band_headline())}</b> "
+            f"Clusters below are sorted into four bands against {n_training:,} "
+            f"historical cluster buys: <b>top band</b> (70th-90th percentile, the "
+            f"best-measured band), <b>above band</b> (90th-100th, explicitly NOT "
+            f"better than top band), <b>middle</b> (30th-70th), and "
+            f"<b>elevated risk</b> (0-30th, the durable result). "
+            f"{_esc(findings.new_score_quality_note())} "
+            f"{_esc(findings.prev_score_contrast_note())} "
+            f"{_esc(findings.elevated_risk_crash_note())} "
+            f"{_esc(findings.top_band_permutation_note())} "
             f"Clusters scored on fewer than half the model's inputs are marked "
             f"&ldquo;unavailable&rdquo; rather than given a number that looks precise "
             f"but is not. This run: {coverage_line}"
@@ -408,11 +475,51 @@ def render_html(payload: dict) -> str:
     expect_points = "".join(f"<li>{_esc(p)}</li>" for p in findings.key_points())
     expect_prov = _esc(findings.PROVENANCE)
     expect_cost = _esc(f"{findings.ROUND_TRIP_COST * 1e4:.0f}bps")
-    # Legend substitutions, from the same single source as the banner.
-    crash_lo_pct = f"{findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[0] * 100:.0f}%"
-    crash_hi_pct = f"{findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE[-1] * 100:.0f}%"
-    shipped_ic = f"{findings.SHIPPED_MODEL_POOLED_IC:+.3f}"
-    yrs_pos_txt = "{} of {}".format(*findings.SHIPPED_MODEL_YEARS_POSITIVE)
+
+    # Legend substitutions for the four current bands, from the same single
+    # source as the banner (findings.py). Each row's numbers come straight
+    # from findings.BANDS -- never hard-coded here.
+    def _band_legend_desc(verdict: str) -> str:
+        b = findings.BANDS_BY_VERDICT[verdict]
+        stats = (
+            f"median 21-day excess return {b.median_excess * 100:+.2f}%, "
+            f"{b.win_rate * 100:.1f}% win rate, {b.p_loses_30pct * 100:.2f}% "
+            f"chance of losing more than 30% within 21 days"
+        )
+        if verdict == "top_band":
+            return (
+                f"Percentile 70-90 against the model's own training-score "
+                f"distribution. The <b>best-measured</b> band: {stats}. A "
+                f"top-band-only book measured "
+                f"{findings.TOP_BAND_ANNUALIZED_EXCESS * 100:+.2f}%/yr over SPY, "
+                f"then failed a permutation test (p={findings.TOP_BAND_PERMUTATION_P:.3f}) "
+                "&mdash; no index-beating claim is made."
+            )
+        if verdict == "above_band":
+            return (
+                f"Percentile 90-100. Explicitly <b>NOT better than top band</b>: "
+                f"{stats} &mdash; worse on every measured axis than the 70-90 "
+                "band. A higher percentile is not a better candidate."
+            )
+        if verdict == "middle":
+            return f"Percentile 30-70. {stats} &mdash; no strong signal either way."
+        if verdict == "elevated_risk":
+            lo, hi = findings.ELEVATED_RISK_CRASH_RATE_RANGE
+            n_years = len(findings.ELEVATED_RISK_CRASH_RATE_BY_YEAR)
+            return (
+                f"Percentile 0-30. The <b>durable</b> result: {stats}, and that "
+                f"loss chance stayed between {lo * 100:.1f}% and {hi * 100:.1f}% "
+                f"in every one of the {n_years} out-of-sample years measured. "
+                "Read it as the band to avoid."
+            )
+        raise ValueError(verdict)
+
+    band_legend_html = "".join(
+        f'<span class="lg-key"><span class="verdict verdict-{v}">'
+        f'{_esc(findings.BANDS_BY_VERDICT[v].label)}</span></span>'
+        f'<span class="lg-desc">{_band_legend_desc(v)}</span>'
+        for v in ("top_band", "above_band", "middle", "elevated_risk")
+    )
 
     rows_html_parts: list[str] = []
     for idx, c in enumerate(clusters):
@@ -661,13 +768,24 @@ def render_html(payload: dict) -> str:
                   font-weight: 600; font-size: 12px; color: #fff; }}
   .verdict {{ display: inline-block; padding: 2px 10px; border-radius: 10px;
              font-size: 11.5px; font-weight: 700; white-space: nowrap; }}
-  /* Deliberately NOT green. This band is the most volatile, not the best --
-     see the legend and findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE. A green
-     "good" badge contradicted the text sitting next to it. */
-  .verdict-top_decile {{ background: #fed7aa; color: #9a3412; }}
-  .verdict-no_edge {{ background: #e5e7eb; color: #4b5563; }}
+  /* Current four-band verdict (findings.BANDS). top_band gets the
+     affirmative color -- it is the best-measured band -- but see the legend
+     and findings.top_band_permutation_note(): it is not an index-beating
+     signal. above_band gets a distinct, non-affirmative color: a higher
+     percentile than top_band is NOT better, so it must not read as "more
+     good" than top_band. elevated_risk gets the warning color -- it is the
+     durable, worst-measured band (findings.elevated_risk_crash_note()). */
+  .verdict-top_band {{ background: #d1fae5; color: #065f46; }}
+  .verdict-above_band {{ background: #e0e7ff; color: #3730a3; }}
+  .verdict-middle {{ background: #e5e7eb; color: #4b5563; }}
+  .verdict-elevated_risk {{ background: #fecaca; color: #991b1b; }}
   .verdict-unavailable {{ background: #fef3c7; color: #92400e; }}
   .verdict-not_scored {{ background: #f3f4f6; color: #9ca3af; }}
+  /* RETIRED verdicts (top_decile, no_edge), kept only so an old score bundle
+     still renders. Deliberately NOT green --
+     see findings.SHIPPED_MODEL_CRASH_RATE_BY_DECILE. */
+  .verdict-top_decile {{ background: #fed7aa; color: #9a3412; }}
+  .verdict-no_edge {{ background: #e5e7eb; color: #4b5563; }}
   .pctl-text {{ font-size: 11px; color: #6b7280; margin-top: 3px; }}
   .degraded-flag {{ display: inline-block; background: #fee2e2; color: #991b1b;
                     padding: 1px 6px; border-radius: 10px; font-size: 9.5px;
@@ -729,7 +847,7 @@ def render_html(payload: dict) -> str:
   <div class="stat"><div class="label">Insiders Involved</div><div class="value">{summary['insiders']}</div></div>
   <div class="stat"><div class="label">Total Acquired $</div><div class="value">{summary['total_value']}</div></div>
   <div class="stat"><div class="label">Model-Scored</div><div class="value">{summary['model_scored']}</div></div>
-  <div class="stat"><div class="label">Top Decile (highest risk)</div><div class="value">{summary['top_decile']}</div></div>
+  <div class="stat"><div class="label">Top Band (70th-90th pctl)</div><div class="value">{summary['top_band']}</div></div>
 </section>
 
 <section class="model-banner">
@@ -763,10 +881,7 @@ def render_html(payload: dict) -> str:
   <summary>Legend</summary>
   <div class="legend-grid">
     <h4>Model verdict &amp; percentile &mdash; click any row for the per-factor reasons panel</h4>
-    <span class="lg-key"><span class="verdict verdict-top_decile">Top decile</span></span>
-    <span class="lg-desc">Percentile &ge; 90 against the model's own training-score distribution. This is the <b>highest-risk</b> band, not the best one: measured out of sample it lost more than 30% in 63 days {crash_hi_pct} of the time, against {crash_lo_pct} for the lowest-scoring decile. Read it as &ldquo;most volatile.&rdquo;</span>
-    <span class="lg-key"><span class="verdict verdict-no_edge">No measured edge</span></span>
-    <span class="lg-desc">Everything below the top decile. The model shows no reliable broad rank skill (pooled IC {shipped_ic}, positive in {yrs_pos_txt} years) &mdash; this means &ldquo;unproven,&rdquo; not &ldquo;bad.&rdquo;</span>
+    {band_legend_html}
     <span class="lg-key"><span class="verdict verdict-unavailable">Unavailable</span></span>
     <span class="lg-desc">Fewer than half the model's 50 inputs could be computed for this cluster (see &ldquo;reduced features&rdquo; below) &mdash; the score exists but is not trustworthy enough to band.</span>
     <span class="lg-key"><span class="verdict verdict-not_scored">Not scored</span></span>
@@ -818,7 +933,7 @@ def render_html(payload: dict) -> str:
   <input id="filter" type="text" placeholder="Filter by issuer or ticker..." />
   <span class="signal-toolbar">
     <button data-show="all" class="active">All</button>
-    <button data-show="top_decile">Top decile only</button>
+    <button data-show="top_band">Top band only</button>
     <button data-show="not-unavailable">Hide unavailable/unscored</button>
     <button data-show="not-ipo">Hide recent IPOs</button>
   </span>
@@ -935,7 +1050,7 @@ def render_html(payload: dict) -> str:
         var verdict = row.dataset.verdict;
         var ipo = row.dataset.ipo === '1';
         var keep = (mode === 'all') ||
-                   (mode === 'top_decile' && verdict === 'top_decile') ||
+                   (mode === 'top_band' && verdict === 'top_band') ||
                    (mode === 'not-unavailable' && verdict !== 'unavailable' && verdict !== 'not_scored') ||
                    (mode === 'not-ipo' && !ipo);
         row.dataset.verdictHidden = keep ? '' : '1';

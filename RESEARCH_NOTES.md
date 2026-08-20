@@ -1056,3 +1056,155 @@ to skip is the durable output. Knowing which to buy is not.
   tickers have no price file at all, covering 24.9% of buy rows and 27.1%
   of buy dollars.** Any ETF-beating claim smaller than this bias is not
   measurable with free data.
+
+## A ranking that beats the shipped one, and a portfolio claim that dies (2026-08-20)
+
+**Method.** New `tools/score_lab.py` builds out-of-fold scores with one
+expanding-window fold per calendar year (purge = horizon + 21-trading-day
+embargo, compared on `entry_idx` so it is exact in trading days), then runs
+a fixed pre-registered gauntlet: monthly-cohort IC with a block bootstrap
+over months, years positive, volatility-neutral IC inside vol quintiles
+head-to-head against a plain low-volatility ranker, decile MEDIANS with
+crash rates, and a top-N book over non-overlapping periods.
+`tools/run_score_lab.py` holds 19 pre-registered candidates; all were run
+and all are reported. Grading label throughout: log excess over SPY at 21
+trading days. Dataset `research_10861rows_20260813.parquet`, 9,095 scored
+rows, out-of-sample years 2020-2026.
+
+**Candidate results** (seed 0 unless noted), monthly IC / years positive /
+vol-neutral IC:
+
+| candidate | IC | yrs+ | vol-neutral | verdict |
+|---|---|---|---|---|
+| C1 quantile a0.45 on adj_21 (reproduces the earlier T1) | +0.0617 | 7/7 | +0.0326 | pass |
+| C2 quantile on sector-and-month-relative (reproduces T4) | +0.0399 | 6/7 | +0.0246 | pass, worse than C1 |
+| C3 quantile on log excess | +0.0572 | 7/7 | +0.0265 | pass |
+| C4 LambdaRank, month as query group | -0.0165 | 2/7 | +0.0167 | fail |
+| C5 quantile on month-relative | +0.0617 | 6/7 | +0.0377 | pass |
+| C7 P(no 15% loss in 21d) | +0.0793 | 7/7 | +0.0105 | FAIL the vol audit |
+| C8 P(beat SPY by 10%) = shipped score's shape | -0.0581 | 1/7 | +0.0148 | fail |
+| C9 same target, plain squared-error loss | -0.0046 | 3/7 | +0.0069 | fail |
+| C10 C2 minus the 12 price/momentum/vol features | -0.0038 | 3/7 | -0.0021 | fail |
+| C16 quantile alpha 0.55 | +0.0211 | 5/7 | +0.0249 | fail |
+| C19 quantile a0.35, month-and-vol-relative, live features only | +0.0808 | 7/7 | +0.0613 | pass |
+
+Reference: a plain "sort by low volatility" ranker scores +0.0145
+vol-neutral.
+
+Four things fell out of this that are worth keeping:
+
+1. Sector-relative training (the earlier T4 result) did NOT replicate.
+   Month-relative alone beats it on every axis. What helps is removing the
+   month; adding the industry on top hurts.
+2. The quantile alpha has a monotone gradient -- 0.25 and 0.35 pass, 0.45
+   is weaker, 0.55 fails. A lower alpha puts the loss on the left tail.
+   The informative part of this signal is which buys go badly.
+3. Learning to rank (C4) failed outright despite optimising the exact
+   quantity the IC measures. It also produced the single BEST top-10 book
+   number in the whole sweep (+34.7%/yr, p=0.05) while having a NEGATIVE
+   IC -- a standing demonstration of why the portfolio test cannot be the
+   gate.
+4. C10 confirms the uncomfortable earlier finding: strip the 12
+   price/momentum/vol features and the ranking is gone (IC -0.004). This
+   is price context, not insider quality.
+
+**The shipped score, graded on the same gauntlet for the first time at 21
+days:** monthly IC -0.0368 (t=-1.86), positive in 2 of 7 years,
+vol-neutral IC +0.0130 which is BELOW the low-volatility ranker's
++0.0145, decile monotonicity -0.81, and its crash rate P(-30% in 21d)
+climbs 2.9% -> 7.1% from bottom decile to top. It ranks crash risk
+upward. Confirmed again, on a new horizon and a new metric.
+
+**The new score: C19 as a 10-seed rank-average ensemble.** Every one of
+the 10 members individually scores 7/7 years positive with IC between
++0.0772 and +0.0884 and vol-neutral IC between +0.0483 and +0.0626. The
+ensemble: monthly IC +0.0883, t=5.08, 95% CI [+0.0537, +0.1196], positive
+in 7 of 7 years, vol-neutral IC +0.0630 (4.3x the low-vol ranker), decile
+monotonicity +0.93. Two disjoint 5-seed halves rank-correlate +0.964.
+This is the first score measured here that does not move on the seed.
+
+**Decile table** (ensemble, 9,095 rows, log excess vs SPY at 21 days):
+
+| decile | n | median | win rate | P(-30%) |
+|---|---|---|---|---|
+| 0 | 910 | -4.10% | 41.7% | 12.75% |
+| 1 | 909 | -2.82% | 44.1% | 6.05% |
+| 2 | 910 | -1.64% | 45.1% | 4.84% |
+| 3 | 909 | -1.46% | 43.9% | 3.52% |
+| 4 | 910 | -1.06% | 44.8% | 3.30% |
+| 5 | 909 | -0.64% | 47.3% | 2.20% |
+| 6 | 909 | -0.42% | 48.4% | 1.54% |
+| 7 | 910 | -0.15% | 48.5% | 1.32% |
+| 8 | 909 | +0.09% | 50.6% | 1.10% |
+| 9 | 910 | -0.52% | 48.1% | 2.97% |
+
+**The top decile is not the best band.** Decile 9 is worse than decile 8
+on both median and crash rate, in 5 of 7 out-of-sample years. Grouped
+into bands: 0-29th percentile median -2.68% / crash 7.88%; 30-69th
+-0.83% / 2.64%; 70-89th -0.09% / 1.21%; 90-100th -0.52% / 2.97%. So "sort
+descending, take the top N", which is what the screener does today,
+lands on the wrong rows.
+
+**The band result, and why it does not survive.** Holding the 70-90th
+percentile band, equal weight, re-cut every 21 trading days,
+non-overlapping, net of 20bps, returned +19.77%/yr over SPY (p=0.040,
+5/7 years) and +22.34%/yr over IWM (p=0.016, 6/7 years). It does not
+survive its audits:
+
+- 12 bands were tested and the best reported. A permutation test --
+  shuffle scores within each period, re-run the entire best-of-12 band
+  search on the shuffled scores, 200 draws -- gives a null median of
+  +18.46%/yr against the observed +19.77%/yr. **Permutation p = 0.435.**
+  The band search alone manufactures this number.
+- 9 of 906 positions (top 1%) produced 45.7% of gross gain; the top 3%
+  produced 79.8%. Largest: CABA +246%, CRVW +167%, TKNO +164%.
+- With a $3 entry-price floor the excess collapses from +19.77% to
+  +5.76% (p=0.374). Most of it is sub-$3 stocks.
+- Leave-one-year-out: dropping 2022 takes it from +19.77% to +9.69%/yr.
+  2022 alone was +92.08%.
+
+State plainly that the bootstrap CI over periods (95% [+2.47%, +42.63%],
+P(<=0)=0.010) looks convincing and is wrong, because it prices the
+sampling of periods but not the selection of the band. That is the
+lesson of this section.
+
+**What DOES survive, and is what ships.** The risk ordering. Crash rate
+P(-30% in 21 days) by band, per year, bottom 30% vs top 30% of the
+score: 2020 8.07 vs 6.36, 2021 7.91 vs 1.00, 2022 7.45 vs 1.18, 2023
+7.31 vs 0.71, 2024 9.22 vs 0.63, 2025 7.37 vs 0.28, 2026 7.66 vs 0.00.
+The bottom-30% rate sits between 7.3% and 9.2% in every single year.
+Decile monotonicity in median holds at +0.93 / +0.94 / +0.93 under
+entry-price floors of $0 / $3 / $5, and crash monotonicity at -0.88 /
+-0.84 / -0.76. Unlike the band's return number, this is a left-tail
+FREQUENCY over ~900 rows per decile, not an average dragged by a
+handful of winners, which is why the price floor and the year split do
+not move it.
+
+**How this changes the product.** The live screener's score is replaced
+by this ensemble, its bands are redrawn to 0-30 / 30-70 / 70-90 / 90-100
+with the 70-90 band presented as the top candidates and the 90-100 band
+explicitly flagged as NOT better, and no portfolio or index-beating
+claim is made anywhere.
+
+What remains open:
+
+- No market-cap/size or earnings-date data. Earnings proximity is still
+  the most obviously missing feature for a 21-day horizon.
+- Survivorship still caps everything: 33.2% of tickers are unpriceable.
+- The ranking is mostly price context, so it is not evidence that
+  insiders pick well.
+- The BACKTESTER was not re-aimed. `backtest/model_scores.py` still
+  defaults to `oof_tail_classifier`, so every `model_ranked_*` strategy
+  in the grid still ranks on the score this section measures at IC
+  -0.0368 and 2/7 years. That is deliberate for now, not an oversight:
+  those strategies are top-N books, and the top-N structure is exactly
+  what the band work above shows to be the wrong shape for this signal.
+  Re-pointing them would produce a new set of top-N numbers carrying the
+  same best-of-N selection bias the permutation test just exposed.
+  Decide it on purpose, the way `PRODUCTION_SCORE_MODEL` was decided.
+- The screening ensemble is fit on the full dataset with no holdout,
+  which is correct for a production artifact and means the bundle itself
+  carries no out-of-sample evidence. All of it comes from the
+  walk-forward folds in `tools/score_lab.py`. Anyone re-fitting on a new
+  dataset should re-run `tools/ship_candidate.py` rather than assume the
+  numbers above transfer.

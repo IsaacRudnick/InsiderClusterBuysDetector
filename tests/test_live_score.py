@@ -440,13 +440,31 @@ class _Avail:
 
 
 class TestBandVerdict:
-    def test_percentile_at_cutoff_is_top_decile(self):
+    # The default banding is now the screening ensemble's four bands. The two
+    # retired states are still reachable, via screen=False, for a caller that
+    # loaded an older single-classifier bundle -- those cuts were measured on
+    # a different ordering and must not be applied to this one. Both paths are
+    # tested here; the band boundaries themselves live in
+    # tests/test_screen_model.py.
+    def test_percentile_at_old_cutoff_is_top_decile_for_an_old_bundle(self):
         avail = _Avail(0.0)
-        assert ls.band_verdict(ls.TOP_DECILE_PERCENTILE_CUTOFF, avail) == ls.Verdict.TOP_DECILE
+        assert ls.band_verdict(
+            ls.TOP_DECILE_PERCENTILE_CUTOFF, avail, screen=False
+        ) == ls.Verdict.TOP_DECILE
 
-    def test_just_below_cutoff_is_no_edge(self):
+    def test_just_below_old_cutoff_is_no_edge_for_an_old_bundle(self):
         avail = _Avail(0.0)
-        assert ls.band_verdict(ls.TOP_DECILE_PERCENTILE_CUTOFF - 0.01, avail) == ls.Verdict.NO_EDGE
+        assert ls.band_verdict(
+            ls.TOP_DECILE_PERCENTILE_CUTOFF - 0.01, avail, screen=False
+        ) == ls.Verdict.NO_EDGE
+
+    def test_the_same_percentile_bands_differently_under_the_two_scores(self):
+        """A 95th percentile is the top badge under the retired score and an
+        explicitly-not-better badge under the current one. That divergence is
+        the whole point of the change, so it is pinned here."""
+        avail = _Avail(0.0)
+        assert ls.band_verdict(95.0, avail, screen=False) == ls.Verdict.TOP_DECILE
+        assert ls.band_verdict(95.0, avail, screen=True) == ls.Verdict.ABOVE_BAND
 
     def test_nan_percentile_is_unavailable(self):
         avail = _Avail(0.0)
@@ -462,12 +480,12 @@ class TestBandVerdict:
         trip the backstop by itself; DEFAULT_MAX_MISSING_FEATURE_FRAC=0.5
         is a backstop against an extreme case, not the normal gate."""
         avail = _Avail(19 / 50)
-        assert ls.band_verdict(50.0, avail) == ls.Verdict.NO_EDGE
+        assert ls.band_verdict(50.0, avail) == ls.Verdict.MIDDLE
 
     def test_custom_threshold_is_respected(self):
         avail = _Avail(0.3)
         assert ls.band_verdict(99.0, avail, max_missing_frac=0.2) == ls.Verdict.UNAVAILABLE
-        assert ls.band_verdict(99.0, avail, max_missing_frac=0.5) == ls.Verdict.TOP_DECILE
+        assert ls.band_verdict(99.0, avail, max_missing_frac=0.5) == ls.Verdict.ABOVE_BAND
 
 
 # ---------------------------------------------------------------------------
@@ -499,7 +517,13 @@ class TestScoreLiveCluster:
 
         assert 0.0 <= result.raw_score <= 1.0
         assert 0.0 <= result.percentile <= 100.0
-        assert result.verdict in (ls.Verdict.TOP_DECILE, ls.Verdict.NO_EDGE, ls.Verdict.UNAVAILABLE)
+        # make_bundle builds an old-style single-classifier bundle, so the
+        # retired two-state banding is the CORRECT answer here -- this file's
+        # fixtures deliberately still exercise that path. The screening
+        # ensemble's bands are covered in tests/test_screen_model.py.
+        assert result.verdict in (
+            ls.Verdict.TOP_DECILE, ls.Verdict.NO_EDGE, ls.Verdict.UNAVAILABLE,
+        )
         assert len(result.factors) == len(ls.REASON_PANEL_FACTORS)
         assert result.as_of == date(2026, 1, 10)
 
