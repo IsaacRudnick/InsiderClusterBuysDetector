@@ -137,12 +137,21 @@ class BookSpec:
     #: scheme. Without one, inverse-variance weighting can put half the book
     #: in a single low-volatility name and quietly stop being a portfolio.
     max_weight: float = 1.0
+    #: When True, `panel_returns` charges the weighted-average of PER-ROW
+    #: costs carried on the panel (see `build_panel(..., cost_col=...)`)
+    #: instead of the flat `cost_bps` above. Off by default so every existing
+    #: caller -- and every test in tests/test_sharpe_lab.py -- is unaffected.
+    #: See tools/execution_model.py for where the per-row costs come from and
+    #: why a flat cost is wrong (it charges a $2 microcap the same 20bps as a
+    #: $30 large-cap, which understates the former and overstates the latter).
+    use_per_row_cost: bool = False
 
     def label(self) -> str:
         n = f",n<={self.max_names}" if self.max_names else ""
         p = f",${self.min_price:g}+" if self.min_price else ""
         c = f",cap{self.max_weight:g}" if self.max_weight < 1.0 else ""
-        return f"{self.lo:.0%}-{self.hi:.0%} {self.weighting}{n}{p}{c}"
+        r = ",row-cost" if self.use_per_row_cost else ""
+        return f"{self.lo:.0%}-{self.hi:.0%} {self.weighting}{n}{p}{c}{r}"
 
 
 def select(g: pd.DataFrame, spec: BookSpec, score_col: str) -> pd.DataFrame:
@@ -184,14 +193,32 @@ class PeriodPanel:
     spy: np.ndarray
     iwm: np.ndarray
     year: np.ndarray
+    #: Per-row round-trip cost in bps, one array per period, aligned index-
+    #: for-index with `score`/`fwd`/`vol`/`price` above. None unless the
+    #: caller asked `build_panel` for a `cost_col` -- existing callers get
+    #: None and `panel_returns` falls back to the flat `cost_bps` exactly as
+    #: before.
+    cost: list[np.ndarray] | None = None
 
     @property
     def n_periods(self) -> int:
         return len(self.score)
 
 
-def build_panel(df: pd.DataFrame, score_col: str) -> PeriodPanel:
+def build_panel(
+    df: pd.DataFrame, score_col: str, cost_col: str | None = None
+) -> PeriodPanel:
+    """Pre-slice `df` into per-period numpy arrays.
+
+    `cost_col`, if given, names a column of per-row round-trip cost in bps
+    (see `tools/execution_model.estimated_cost_bps`) that gets carried into
+    `PeriodPanel.cost` alongside everything else, so `panel_returns` can
+    charge each held position its own estimated cost instead of one flat
+    number. Omitting it reproduces the exact panel this function has always
+    built.
+    """
     score, fwd, vol, price, spy, iwm, year = [], [], [], [], [], [], []
+    cost = [] if cost_col is not None else None
     for _, g in df.groupby("period", sort=True):
         score.append(g[score_col].to_numpy(dtype=float))
         fwd.append(g["fwd_21"].to_numpy(dtype=float))
@@ -207,8 +234,11 @@ def build_panel(df: pd.DataFrame, score_col: str) -> PeriodPanel:
         spy.append(float(g["bench_SPY"].mean()))
         iwm.append(float(g["bench_IWM"].mean()))
         year.append(int(pd.to_datetime(g["entry_day"]).dt.year.median()))
+        if cost_col is not None:
+            cost.append(pd.to_numeric(g[cost_col], errors="coerce")
+                        .fillna(0.0).to_numpy(dtype=float))
     return PeriodPanel(score, fwd, vol, price,
-                       np.asarray(spy), np.asarray(iwm), np.asarray(year))
+                       np.asarray(spy), np.asarray(iwm), np.asarray(year), cost)
 
 
 def panel_returns(
@@ -217,6 +247,12 @@ def panel_returns(
     """`period_returns` over the flat panel. Same recipe, same answer, fast."""
     scores = scores if scores is not None else panel.score
     cost = spec.cost_bps / 10_000.0
+    if spec.use_per_row_cost and panel.cost is None:
+        raise ValueError(
+            "BookSpec.use_per_row_cost=True but this panel carries no "
+            "per-row cost array -- build it with "
+            "sharpe_lab.build_panel(df, score_col, cost_col=...)"
+        )
     rows = []
     for i in range(panel.n_periods):
         s, f, v, px = scores[i], panel.fwd[i], panel.vol[i], panel.price[i]
@@ -224,6 +260,7 @@ def panel_returns(
         if keep.sum() < 10:
             continue
         s, f, v = s[keep], f[keep], v[keep]
+        c_row = panel.cost[i][keep] if spec.use_per_row_cost else None
         n = len(s)
         # Percentile rank within the period, ties broken by position -- the
         # same "rank(pct=True)" convention the pandas path uses.
@@ -246,9 +283,14 @@ def panel_returns(
         if spec.max_weight < 1.0:
             w = np.minimum(w, spec.max_weight)
             w = w / w.sum()
+        # Per-row cost is the weighted average of what was actually paid to
+        # get into and out of each held name, not one number applied to the
+        # whole book -- a cheap, thin name and an expensive, liquid one in
+        # the same period do not cost the same to trade.
+        row_cost = float((c_row[idx] / 10_000.0 * w).sum()) if c_row is not None else cost
         rows.append(
             dict(period=i, year=int(panel.year[i]), n_held=len(idx),
-                 ret=float((f[idx] * w).sum()) - cost,
+                 ret=float((f[idx] * w).sum()) - row_cost,
                  bench_SPY=float(panel.spy[i]), bench_IWM=float(panel.iwm[i]))
         )
     return pd.DataFrame(rows)

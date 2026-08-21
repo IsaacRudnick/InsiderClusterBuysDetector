@@ -1345,3 +1345,85 @@ Closed off: objective choice, horizon, weighting, band selection,
 long/short, earnings data, universe restriction. Remaining and
 untested: company size/valuation from XBRL, and the survivorship bound
 (33.2% of tickers unpriceable), which caps everything above.
+
+## The execution model was rigged pessimistic; redoing it does not change the verdict (2026-08-20)
+
+The "untradeable" call above rested on `tools/tradeable_universe.py`'s
+`tradeable_mask`: a position had to fit inside 10% of a SINGLE day's
+dollar volume, and every name, cheap or expensive, thin or deep, was
+charged the same flat round-trip cost (20-75bps by scenario). Both were
+stated as "the right way to be wrong" -- conservative on purpose. On
+review that is not the same as correct, and both push the same
+direction, so they deserved to be redone rather than trusted.
+
+`tools/execution_model.py` replaces both pieces:
+
+- **`capacity_mask`** spreads the fill over `days_to_fill` trading days
+  instead of forcing it into one: `participation * ADV * days_to_fill
+  >= capital / n_names`. `days_to_fill=1` reproduces the old mask's
+  liquidity condition exactly; capacity scales linearly from there
+  (proven in `tests/test_execution_model.py`), so 5 days is 5x the old
+  capacity at the same 10% participation rate.
+- **`estimated_cost_bps`** prices every row individually from
+  `entry_open` and `x_log_adv20` instead of one flat number: a
+  half-spread proxy that widens as price and volume fall, plus a
+  square-root market-impact term (Almgren & Chriss; the Grinold & Kahn
+  "cost ~ sigma * sqrt(size/ADV)" rule of thumb), calibrated so a $30
+  stock on $20M ADV round-trips near 25bps and a $2 stock on $300k ADV
+  round-trips near 203bps -- both inside the target bands the module's
+  docstring states, fixed before any capacity table was run.
+- `sharpe_lab.py` gained an optional per-row cost path
+  (`PeriodPanel.cost`, `BookSpec.use_per_row_cost`) so a book can be
+  charged the weighted-average of what each held name actually costs.
+  Every existing call site defaults to the old flat-cost behaviour
+  unchanged -- `tests/test_sharpe_lab.py`'s 18 tests pass byte-for-byte
+  as before.
+
+**Capacity table, corrected: 70-90 band, equal weight, shipped `ens`
+score, real per-row costs, real multi-day fills:**
+
+| capital | days=1 | days=3 | days=5 | days=10 | SPY Sharpe (same periods) |
+|---|---|---|---|---|---|
+| $100k | 0.942 | 0.878 | 0.869 | 0.868 | ~1.19 |
+| $250k | 0.879 | 0.871 | 0.811 | 0.756 | ~1.19-1.21 |
+| $1M | 0.670 | 0.748 | 0.634 | 0.652 | ~1.20 |
+| $5M | 0.640 | 0.477 | 0.365 | 0.418 | ~1.19-1.24 |
+| $25M | 0.658 | 0.565 | 0.348 | 0.175 | ~0.99-1.24 |
+
+Sharpe stays below SPY's at every capital level and every days-to-fill
+tested. More striking: giving the order MORE days to fill usually makes
+the book worse, not better, especially at size ($25M: 0.658 at
+days=1 falling to 0.175 at days=10). The reason is mechanical and
+matches how the pieces were built: more days admits more thin names
+into the eligible universe (rows surviving the mask: $25M book, 2,132
+at days=1 rising to 4,621 at days=10), and those marginal names are
+exactly the ones the corrected cost model prices worst -- a bigger
+position against thinner volume is more market impact, not less. Error
+#1 (one-day fill) was real, but fixing it does not rescue the strategy,
+because error #2 (flat cost) had been masking how expensive the
+marginal names actually are.
+
+**Cost distribution, events actually held in the 70-90 band** (median,
+quartiles, share over 100bps round trip -- printed so the cost model
+itself can be sanity-checked rather than trusted blind):
+
+| book | median | IQR | share > 100bps |
+|---|---|---|---|
+| $250k | 51bps | 18-125bps | 31% |
+| $1M | 85bps | 29-211bps | 44% |
+| $5M | 170bps | 58-422bps | 65% |
+
+These medians all sit ABOVE the flat 20-75bps this project was charging
+before. The old flat-cost analysis was not uniformly too harsh -- it was
+too harsh on liquidity (one-day fills) and too lenient on cost (a flat
+number that underprices exactly the cheap, thin names the strategy's
+edge concentrates in) at the same time, and the two errors partly
+canceled in the old headline numbers rather than one dominating.
+
+**Verdict: unchanged, and now for the right reason.** The signal
+survives its permutation test and the unrestricted book beats SPY on
+both return and Sharpe. Under a corrected, real-fill, real-cost
+execution model it still does not clear an index fund at any capital
+level from $100k to $25M. The honest statement stands: the edge is real
+and, on this evidence, unharvestable at the prices and depths this
+market actually offers.
