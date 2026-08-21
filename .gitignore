@@ -63,3 +63,16 @@ desktop.ini
 # ---------------------------------------------------------------------------
 # Per-machine permission grants. CLAUDE.md itself is committed.
 .claude/settings.local.json
+
+# Caches for the 2026-08-21 data sources. All reproducible by re-running
+# the tool that built them; none worth versioning.
+# SEC submissions JSON per dead-ticker CIK, for tools/delisting_fate.py
+delist_cache/
+# raw FINRA short-interest responses, per settlement date
+short_interest_cache/
+# SEC bulk financial-statement ZIPs, ~3.4 GB
+xbrl_cache/
+# per-issuer 13D/13G and 8-K item data
+filing_context_cache/
+# FRED macro series CSVs
+fred_cache/
