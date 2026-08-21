@@ -1427,3 +1427,92 @@ execution model it still does not clear an index fund at any capital
 level from $100k to $25M. The honest statement stands: the edge is real
 and, on this evidence, unharvestable at the prices and depths this
 market actually offers.
+
+## The holdout test: the search overfits, the exit rule survives (2026-08-20)
+
+**The protocol, pre-registered before running.** After searching 384
+event definitions, ~90 exit rules, 132 book recipes and 24 model
+candidates, any "best" number measured on all the data describes the
+search, not the world. So the data was split once and the split
+enforced in code (`tools/final_search.py`): SELECTION 2020-01-02..
+2022-12-30 (4,161 scored events), HOLDOUT 2023-01-03..2026-08-12
+(5,016 events). `search()` never sees a holdout row; `evaluate_holdout()`
+runs once on the single configuration the search returns. Note the
+holdout is the harder half: SPY compounded at +23.15% with Sharpe
+1.456 there, against +13.3% and 0.686 in the selection window.
+
+**What was searched.** 7,560 configurations = universe filters (min
+insiders 2/3/4; min total value $0/$250k/$1M; officer required or
+not; max buying-window span 99/7/3 days; min price $0/$5) x band
+(all / 50-100 / 70-100 / 50-90 / 70-90 of the model score) x 7 exit
+rules x 10 or 20 slots. 6,622 cleared the 80-trade floor. Scored on a
+daily-marked, slot-limited book with empty slots earning zero, net of
+PER-ROW estimated trading costs.
+
+**Selection window result, top 5:**
+
+| config | events | ann | Sharpe | maxDD |
+|---|---|---|---|---|
+| n>=4,$0.25M,officer,span<=3 \| 70-100% \| trail25%@10% max252 \| 10sl | 85 | +44.3% | 1.437 | -35.2% |
+| n>=4,$0.25M,span<=3 \| 70-100% \| trail25%@10% max252 \| 20sl | 101 | +27.9% | 1.409 | -21.5% |
+| n>=4,$0.25M,officer \| 70-100% \| trail25%@10% max252 \| 10sl | 95 | +43.1% | 1.356 | -37.6% |
+| n>=3,$0.25M,officer,span<=7 \| 50-100% \| trail25%@10% max252 \| 10sl | 243 | +42.6% | 1.351 | -42.5% |
+| n>=4,$0.25M,officer,span<=7 \| 70-100% \| trail25%@10% max252 \| 10sl | 93 | +42.3% | 1.350 | -37.6% |
+
+against SPY's +13.3% / 0.686.
+
+**Holdout result for the locked configuration: ann +5.81%, vol
+18.32%, Sharpe 0.400, Sortino 0.604, maxDD -20.21%, 1.22x -- against
+SPY's +23.15%, Sharpe 1.456, maxDD -18.76%, 2.11x.** Sharpe fell
+1.437 -> 0.400.
+
+**It is not one unlucky pick -- the whole neighbourhood fails.** All
+ten of the selection window's best configurations were scored on the
+holdout. Their holdout Sharpes run -0.009 to +0.676 and holdout
+annual returns -2.0% to +10.4%. Every one is below SPY. A single bad
+draw would be noise; the entire region collapsing is the search being
+caught.
+
+**What DID survive, and it is the one thing that generalised.**
+Reference books on the holdout, all fixed configurations rather than
+searched ones:
+
+| holdout book (2023-2026) | ann | Sharpe | maxDD | final |
+|---|---|---|---|---|
+| all clusters, 21-day fixed hold, 20 slots | -1.65% | 0.002 | -32.4% | 0.94x |
+| all clusters, 15% trail armed at +10%, max 126d | **+12.67%** | **0.892** | -19.5% | 1.54x |
+| score 70-90 band, 21-day fixed hold | +2.66% | 0.253 | -27.3% | 1.10x |
+| score 70-90 band, 15% trail armed at +10% | +9.51% | 0.702 | -19.5% | 1.39x |
+| the searched winner | +5.81% | 0.400 | -31.5%* | 1.22x |
+| SPY | +23.15% | 1.456 | -18.8% | 2.11x |
+
+(*the searched winner's own maxDD was -20.21% at 10 slots; the -31.5%
+row is its 20-slot variant.)
+
+State the conclusion plainly: the EXIT RULE generalises and every
+form of SELECTION does not. Swapping a fixed 21-day hold for a
+trailing stop moved the whole unselected population from -1.65%/yr to
++12.67%/yr and Sharpe 0.002 to 0.892 out of sample, with a smaller
+drawdown. Adding the model-score band made it WORSE (+9.51%), and
+adding the searched event-definition filters made it worse again
+(+5.81%). Every layer of cleverness subtracted value out of sample;
+the one mechanical change added it.
+
+**Also tested and rejected: aligning the model's label to the book.**
+The model predicts a fixed 21-day excess while the book now holds
+behind a trailing stop for a median 103 days, so a model was trained
+directly on the realised trailing-stop outcome (log excess over SPY
+across each trade's OWN holding window, cohort-demeaned, quantile
+alpha 0.35, purge and embargo sized to the 126-day maximum hold). It
+fails: monthly IC +0.0072 (t=0.57), volatility-neutral IC +0.0004
+against +0.0145 for a plain low-volatility ranker, decile
+monotonicity +0.22. The path-dependent label is far noisier than the
+fixed-horizon one and the 126-day purge costs too much training data.
+`tools/exit_aligned_model.py`.
+
+**Where this leaves it.** Nothing found in this project beats SPY out
+of sample. The single robust, reproducible improvement is the exit
+rule, worth roughly +14 percentage points a year over a fixed hold on
+the same events with a smaller drawdown, and it requires no model at
+all. The selection machinery -- event definition, model score, band --
+did not survive contact with a period it was not chosen on.
