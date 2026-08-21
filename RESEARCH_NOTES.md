@@ -1516,3 +1516,173 @@ rule, worth roughly +14 percentage points a year over a fixed hold on
 the same events with a smaller drawdown, and it requires no model at
 all. The selection machinery -- event definition, model score, band --
 did not survive contact with a period it was not chosen on.
+
+## Six new free data sources, and the survivorship correction that matters most (2026-08-21)
+
+Six free data sources were added, five as point-in-time feature sets
+and one as a bias correction. The bias correction is the important
+one; the features are mostly negative results. New modules:
+`tools/delisting_fate.py`, `tools/survivorship_bound.py`,
+`tools/survivorship_remeasure.py`, `tools/short_interest.py`,
+`tools/fundamentals.py`, `tools/filing_context.py`,
+`tools/form4_extras.py`, `tools/regime.py`,
+`tools/integrated_model.py`.
+
+### The survivorship correction
+
+The problem: of the 10,861 rows in the research dataset, ZERO are on
+a ticker that later stopped trading, while those tickers carry 24.9%
+of insider transactions and 27.1% of insider dollars. Every
+published number in this file is conditioned on the company still
+existing.
+
+All 2,455 dead tickers were resolved against EDGAR -- 2,455 of 2,455
+found. What happened to them:
+
+| fate | n | share |
+|---|---|---|
+| acquired (incl. delisted in the deal) | 776 | 31.6% |
+| renamed, still alive | 649 | 26.4% |
+| still filing, no current ticker | 499 | 20.3% |
+| bankruptcy | 318 | 13.0% |
+| delisted, unexplained | 204 | 8.3% |
+| unknown | 9 | 0.4% |
+
+This OVERTURNS a standing assumption in these notes. Earlier
+sections assumed the excluded tickers "would land in the bottom
+deciles." They would not: only 13% went bankrupt, while 31.6% were
+acquired -- and deals close at a premium. The bias runs in both
+directions.
+
+Recovering the dropped events adds 4,214 cluster episodes, so the
+true population is 15,075 -- 28% larger than anything measured
+before. 1,144 of them were priced FOR REAL by fetching the current
+symbol (providers backfill a renamed ticker's history).
+
+**Measured, with no assumptions at all**, under the book's exit rule
+(15% trail armed at +10%, max 126 days, 50bps):
+
+| set | n | mean | median | win rate |
+|---|---|---|---|---|
+| survivors only (the status quo) | 10,861 | +4.52% | +2.15% | 56.2% |
+| the renamed, priced for real | 1,144 | +7.41% | +1.67% | 55.2% |
+| both | 12,005 | +4.79% | +2.11% | 56.1% |
+
+The renamed companies did FINE -- better than the survivors on the
+mean. Dropping them cost return.
+
+**The 3,060 that cannot be priced, bounded under three explicit
+assumptions** (bankruptcy is a total loss in all three; the
+scenarios differ on the unexplained delistings):
+
+| scenario | mean trade | vs survivors-only | P(lose >30%) |
+|---|---|---|---|
+| optimistic | -0.02% | -4.54pp | 9.7% |
+| central | -2.34% | -6.86pp | 11.2% |
+| pessimistic | -7.87% | -12.39pp | 17.6% |
+
+The survivorship bias on the mean trade is between -4.5 and -12.4
+percentage points, and even the most generous assumption erases the
+mean trade profit entirely (+4.52% -> about zero). Every trade-level
+and book-level number previously published in this file, including
+the +12.67%/yr holdout result for the trailing-stop book, was
+computed on survivors only and is optimistic by something in that
+range. Reporting caveat: the MEDIAN under these scenarios is pinned
+at 0.00% because a constant is assigned to 1,299 acquisitions, so the
+median is an artifact of the assumption and only the mean is
+informative there.
+
+### The five new feature sets, all point-in-time, mostly negative
+
+Each is reported briefly with its coverage and its descriptive
+result. Medians throughout, because this label has a ~1000% right
+tail.
+
+1. **FINRA short interest** (`tools/short_interest.py`). 432,762
+rows, 2,786 symbols, 2018-08 to 2026-07, pulled by settlement date in
+839 requests / 176 seconds. Coverage 95.1%. Models FINRA's ~8-day
+publication lag explicitly, so a report settled before the event but
+not yet published cannot leak. Median adj_21 by days-to-cover
+quartile: -1.02%, -1.10%, -0.41%, -0.41%. By short % of ADV: -1.03%,
+-1.08%, -0.43%, -0.38%. Non-flat, and in the OPPOSITE direction to
+the naive story -- more heavily shorted names did slightly better,
+not worse. Data-quality trap flagged: FINRA uses 999.99 as a sentinel
+for undefined days-to-cover on zero-volume names, which if taken
+literally would fabricate an extreme signal.
+2. **SEC bulk XBRL fundamentals** (`tools/fundamentals.py`). All 34
+quarters 2018q1-2026q2, 3.36 GB, 457 seconds, 1,047,196 facts across
+10,153 companies. Coverage: market cap 81.7%, equity/assets 86.2%,
+cash/assets 80.3%, revenue 58.4%, net margin 56.0%, cash runway
+33.7%. **Market cap distribution: 25th pct $108M, median $346M, 75th
+pct $1.60B** -- these are small and mid caps, not the microcaps this
+project has been calling them. Median adj_21 by market-cap quintile
+is FLAT (-0.66% to -1.01%). Median adj_21 by cash-runway quartile is
+NOT flat: -2.33%, -2.13%, -1.81%, -0.77%, monotone -- companies
+closest to running out of cash do worst. That is the only genuinely
+promising raw feature found.
+3. **13D/13G and 8-K item codes** (`tools/filing_context.py`). 2,828
+issuers, 127,296 ownership filings, 368,907 8-Ks; the `items` field
+was populated on 100% of 8-Ks, so item codes came free from the
+submissions JSON. Coverage 100% for the count features. Median
+adj_21 with a 13D filed in the prior 90 days: -1.32% (n=1,099) vs
+-0.79% without (n=9,680). With an Item 5.02 officer-departure 8-K in
+the prior 90 days: -0.91% (n=4,311) vs -0.74% (n=6,468). Both small
+and both the wrong way for the "independent confirmation is bullish"
+story. Read as flat.
+4. **FRED regime overlay** (`tools/regime.py`). Verdict: does not
+help out of sample. On the holdout the unmodified book returns
++12.7%/yr at Sharpe 0.892; half-exposure-when-risk-off gives +12.3% /
+0.884; flat-when-risk-off gives +11.8% / 0.862. It trims max drawdown
+from -19.5% to -16.6% and pays for it with return and Sharpe,
+consistently in both windows. Data limitation found: FRED's free
+BAMLH0A0HYM2 history only begins 2023-08-21, so the credit-spread
+flag is unavailable for the whole selection window.
+5. **Unused Form 4 fields** (`tools/form4_extras.py`). Mining grants,
+option exercises, exercise-and-hold, and new-insider counts from the
+1.49M cached filings. The scan of the full cache takes roughly 30
+minutes on first run and is cached afterwards.
+
+**What this changes.** The feature work produced one lead (cash
+runway) and four null results, which is the normal yield and is
+worth recording so nobody re-runs them. The survivorship correction
+is the real outcome: it does not make the strategy better or worse
+in a relative sense, it makes every absolute number previously
+published too high by 4.5 to 12.4 percentage points on the mean
+trade, and it corrects a standing assumption in these notes about
+which way that bias ran.
+
+### Holdout verdict on the new features (2026-08-21)
+
+Every new feature set was put through the same pre-registered holdout the
+rest of this work uses. The book is the unselected-population one: 15%
+trailing stop armed at +10%, max 126 days, 20 slots, per-row estimated
+costs, marked daily, 2023-01..2026-08.
+
+| book | ann | Sharpe | maxDD |
+|---|---|---|---|
+| all events, no selection (control) | +11.47% | 0.654 | -30.4% |
+| top band by baseline score | **+12.85%** | **0.895** | -22.8% |
+| top band by baseline + 13D/13G and 8-K | +11.40% | 0.776 | -21.3% |
+| top band by baseline + everything | +10.35% | 0.743 | -20.7% |
+| top band by baseline + short interest | +9.01% | 0.633 | -24.6% |
+| top band by baseline + fundamentals | +8.14% | 0.602 | -19.4% |
+| SPY | +23.15% | 1.456 | -18.8% |
+
+Every new data source made the holdout book WORSE than the baseline score
+that ignores all of them. The 13D/8-K set is the sharpest illustration:
+it had the best in-sample ranking of anything measured here -- monthly IC
++0.0845 against the baseline's +0.0775, and a volatility-neutral IC of
++0.0648 against +0.0492, a 32% improvement on the metric that has
+repeatedly separated real scores from the volatility factor -- and it
+still lost out of sample, 0.776 against 0.895.
+
+That is the same pattern the 7,560-configuration search produced, arrived
+at from a completely different direction: better in-sample ranking,
+worse out-of-sample book. Adding data is adding selection, and selection
+is what does not survive here.
+
+One row is void rather than negative: the Form 4 extras attached at 0%
+coverage in this run because `form4_extras.attach_features` needs its
+pre-scanned transaction frame passed in explicitly, so that line is
+identical to the baseline by construction and tests nothing. It has not
+been fairly evaluated.
