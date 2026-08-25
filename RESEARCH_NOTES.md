@@ -1686,3 +1686,95 @@ coverage in this run because `form4_extras.attach_features` needs its
 pre-scanned transaction frame passed in explicitly, so that line is
 identical to the baseline by construction and tests nothing. It has not
 been fairly evaluated.
+
+## Settling the two holdout tables: the band does not survive, the exit does (2026-08-25)
+
+The two sections above disagree. "The holdout test" (2026-08-20) reports that
+adding the 70-90 band to the trailing-stop book made it WORSE (+12.67%/yr ->
++9.51%, Sharpe 0.892 -> 0.702) and concludes "every layer of cleverness
+subtracted value out of sample". "Holdout verdict on the new features"
+(2026-08-21) reports a control of +11.47% / 0.654 and a top band of +12.85% /
+0.895 -- the band HELPING. Both are labelled the holdout. A client asking
+"does your ranking help when you actually trade it?" could be answered either
+way from this file, which is not acceptable, so it was re-run.
+
+**Method.** Everything held constant except the two things that differed
+between the tables: the percentile band and the slot count. Same holdout
+window (2023-01-03..2026-08-12, 5,016 events), same unfiltered event
+universe, same `final_search` machinery, same per-row `execution_model` costs,
+same daily-marked slot-limited book. Grid: 2 exit rules x 5 bands x 5 slot
+counts. The `ens` score was regenerated from scratch with
+`tools/ship_candidate.py --seeds 10` and reproduced the shipped ensemble
+exactly (monthly IC +0.0883, t=5.08, 95% CI [+0.0537, +0.1196], 7/7 years,
+vol-neutral IC +0.0630, monotonicity +0.93), so the input is not in question.
+
+### Which table was right
+
+**The 2026-08-20 table is correct and reproduces at 20 slots**, all four rows,
+to within 0.1pp:
+
+| book | notes said | re-run |
+|---|---|---|
+| all clusters, 21d fixed | -1.65% / 0.002 / -32.4% | -1.74% / -0.003 / -32.4% |
+| all clusters, trail | +12.67% / 0.892 / -19.5% | +12.63% / 0.890 / -19.5% |
+| 70-90 band, 21d fixed | +2.66% / 0.253 / -27.3% | +2.66% / 0.253 / -27.3% |
+| 70-90 band, trail | +9.51% / 0.702 / -19.5% | +9.51% / 0.702 / -19.5% |
+
+**The 2026-08-21 table does not reproduce at any slot count, and should not be
+read as a holdout result for the shipped score.** Its "baseline" is not the
+shipped ensemble: `tools/integrated_model.py` defaults to `--seeds 6` (against
+`ship_candidate.py`'s 10) and refits that baseline on the feature-attached
+frame, whose row set differs wherever a new source failed to attach. It is a
+different model on a different population. The comparison inside that table --
+each feature set against that same baseline -- remains valid, and its
+conclusion that every new data source made the book worse is untouched. What
+is not valid is reading its baseline row against the 08-20 table's rows. The
+two were never comparable.
+
+### The substantive answer: the band effect flips on slot count
+
+Sharpe of the band book minus the same book with no band, under the trailing
+stop, across slot counts 5/10/15/20/30:
+
+| band | 5 | 10 | 15 | 20 | 30 | mean | slots helped |
+|---|---|---|---|---|---|---|---|
+| 50-100 | +0.096 | -0.054 | -0.429 | -0.151 | +0.070 | -0.094 | 2/5 |
+| 70-100 | +0.094 | -0.236 | -0.161 | -0.140 | -0.238 | -0.136 | 1/5 |
+| 50-90 | +0.204 | +0.242 | -0.112 | +0.133 | +0.071 | **+0.108** | 4/5 |
+| **70-90 (shipped)** | **+0.477** | -0.438 | -0.389 | -0.188 | -0.149 | **-0.137** | **1/5** |
+
+The shipped 70-90 band helps at 5 slots and hurts at every other slot count.
+Nothing about a percentile band should depend on how many positions the book
+carries; that the sign does is the same instability this project has recorded
+under other names ([[the-headline-is-the-random-seed]],
+[[refit-instability-decides-the-headline]], where likewise only the 5-slot
+variant survived). Read it as noise, not as an effect.
+
+The 50-90 band is the only one positive on the mean and in 4 of 5 slot counts.
+It is a lead and NOT a result: it is the best of four bands tried, and this
+repo's own rule after [[band-search-manufactures-alpha]] is that a best-of-N
+band claim requires a permutation test, which has not been run on it. Do not
+quote it.
+
+### What is robust, in the same grid
+
+The exit rule. Trailing stop minus fixed 21-day hold, same band and same slot
+count, is positive in **25 of 25 cells**: mean Sharpe +0.637, mean annual
+return **+10.75 percentage points**. Every band, every slot count, no
+exceptions. This is by a wide margin the most consistent result the project
+has produced, and it requires no model.
+
+### And it still does not beat SPY
+
+SPY over the same holdout: +23.15%/yr, Sharpe 1.456, maxDD -18.8%. The best
+of the 50 cells is 50-90 band at 10 slots (+26.86%/yr, Sharpe 1.409), which
+beats SPY on return and not on Sharpe, and is a best-of-50 cell of exactly the
+kind the permutation discipline exists to reject. The unselected trailing-stop
+book at 10 slots is +17.55% / 1.167. Every conclusion above about the strategy
+not clearing an index fund stands, and all of it remains subject to the
+survivorship haircut of -4.5 to -12.4pp on the mean trade.
+
+**Bottom line for the product.** The ranking's value is the risk gradient it
+was shipped for -- P(-30% in 21 days) of 7.9% in the bottom band against 1.2%
+in the top, stable in 7 of 7 years -- not portfolio construction. The band
+does not reliably improve a traded book out of sample. The exit rule does.

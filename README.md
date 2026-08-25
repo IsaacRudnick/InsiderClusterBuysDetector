@@ -254,6 +254,9 @@ tools/                      standalone CLIs, each `python tools/<name>.py`
   band_robustness           the permutation, concentration, price-floor,
                             split-half and leave-one-year-out audits that killed
                             the band's return claim
+  settle_band               band vs no band on the holdout, sweeping the slot
+                            count both disputed tables left unfixed. The band's
+                            sign flips; the exit rule's does not.
 
 tests/                      pytest; `python -m pytest tests -q`
 ```
@@ -368,6 +371,15 @@ these invalidate the obvious reading of a report:
   concentration before believing any ranking.
 - **Refit instability decides the headline.** 1.07% fewer training rows moved a
   flagship result from +229.6% to +151.0%. Only the 5-slot variant survived.
+- **The score band does not improve a traded book out of sample; the exit
+  rule does.** Two holdout tables in `RESEARCH_NOTES.md` disagreed on this.
+  Re-run with only the band and the slot count varying (`tools/settle_band.py`),
+  the shipped 70-90 band beats an unbanded book at 5 slots and loses at 10, 15,
+  20 and 30 -- mean Sharpe -0.137, helping in 1 of 5 slot counts. A percentile
+  band should not care how many positions the book holds, so read it as noise.
+  In the same 50-cell grid the trailing stop beats the fixed 21-day hold in
+  **25 of 25 cells** (mean +0.637 Sharpe, +10.75pp/yr). Rank for risk triage,
+  not for portfolio construction.
 - **The `learned_*` strategies are in-sample.** They are in the grid for
   completeness. Their numbers are not evidence.
 
