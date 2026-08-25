@@ -1,20 +1,24 @@
 """Measured facts about this strategy, in one place, with provenance.
 
-WHY THIS MODULE EXISTS. The live screener's dashboard used to state one
-headline ("only the top decile has a measured edge: +4.74pp, p=0.004") that
-was true of the run it was measured on and has since been contradicted by
-later work. A claim that lives as a string literal inside a rendering
-function is a claim nobody re-checks. Everything a user is told about what
-the ranking means now lives here, next to where it came from, so that
-correcting the research corrects the product.
+WHY THIS MODULE EXISTS. The dashboard once stated one headline: "only the
+top decile has a measured edge: +4.74pp, p=0.004". That claim was true of
+the run that produced it. Later work contradicted it. A claim that lives as
+a string literal inside a rendering function is a claim nobody re-checks.
+Everything a user reads about the ranking now lives here, next to its
+source. Correct the research here and the product corrects with it.
 
-EVERY number below is measured, not assumed, and carries its source. If you
+Every number below is measured, not assumed, and carries its source. If you
 change a number, change its provenance line in the same edit.
 
-The headline, stated once: **this pipeline is a skip list, not a pick
-list.** The reliable, repeatable result is identifying insider cluster buys
-to AVOID. No configuration tested produced a portfolio that beats an index
-fund in a way that survives a random-seed sweep.
+THE HEADLINE, STATED ONCE. This pipeline is a skip list, not a pick list.
+It tells you which insider cluster buys are worth manual research and which
+are not. It does not tell you which ones go up. No configuration tested
+produced a portfolio that beats an index fund out of sample.
+
+READ THESE TWO SECTIONS BEFORE QUOTING ANY RETURN FIGURE. The holdout
+section shows that the searched results do not survive a period they were
+not chosen on. The survivorship section shows that every absolute return
+here counts only companies that still trade, so all of them are too high.
 """
 
 from __future__ import annotations
@@ -226,7 +230,7 @@ def headline() -> str:
     WHOLE POPULATION of cluster buys regardless of score -- see band_headline()
     for the sentence about what the model's own ranking means."""
     return (
-        "This is a skip list, not a pick list: the reliable result is which "
+        "This is a skip list, not a pick list. The reliable result is which "
         "insider buys to avoid, not which to buy."
     )
 
@@ -235,9 +239,9 @@ def band_headline() -> str:
     """One plain, non-technical sentence about what the banded score means.
     For the model banner -- see headline() for the population-level line."""
     return (
-        "This ranking reliably identifies which insider cluster buys have "
-        "historically gone wrong most often. It does NOT identify which "
-        "ones go up."
+        "Use these bands to decide where to spend research time. The ranking "
+        "reliably identifies which insider cluster buys went wrong most often. "
+        "It does NOT identify which ones go up."
     )
 
 
@@ -414,25 +418,32 @@ def book_rows() -> list[tuple[str, str, str, str, str, str, str]]:
 
 
 def risk_adjusted_note() -> str:
-    """The headline sentence for this section: the top band DID beat SPY on
-    a risk-adjusted basis this time, and that result passes a permutation
-    test where the earlier raw-return claim failed -- with the mechanism."""
+    """Lead text for the book table. The in-sample warning comes first, on
+    purpose. See band_holdout_note() for what happens out of sample."""
     top = next(b for b in BOOK_RESULTS if b.name == "Top band (70-90)")
     spy = next(b for b in BOOK_RESULTS if b.name == "SPY")
     yrs, yrs_tot = TOP_BAND_YEARS_BEAT_SPY
     return (
-        f"Over this window, a top-band-only book returned {top.ann_return * 100:+.1f}%/yr "
-        f"(Sharpe {top.sharpe:.2f}, Sortino {top.sortino:.2f}) against SPY's "
-        f"{spy.ann_return * 100:+.1f}%/yr (Sharpe {spy.sharpe:.2f}) -- a "
-        f"{TOP_BAND_FINAL_MULTIPLE:.2f}x final multiple against SPY's "
-        f"{SPY_FINAL_MULTIPLE:.2f}x, beating SPY in {yrs} of {yrs_tot} years. "
-        f"This Sharpe result passes a permutation test (p={TOP_BAND_SHARPE_PERMUTATION_P:.3f}; "
-        f"null median {TOP_BAND_SHARPE_NULL_MEDIAN:.3f}, 95th percentile "
-        f"{TOP_BAND_SHARPE_NULL_P95:.3f}) -- unlike the raw annualized-excess-return "
-        f"claim above, which failed the same style of test "
-        f"(TOP_BAND_PERMUTATION_P={TOP_BAND_PERMUTATION_P:.3f}). The two disagree because a "
-        "fat right tail inflates mean return and volatility together, so it can "
-        "inflate a raw return statistic by chance but not a ratio of the two."
+        "Read this warning before the table. Every row below covers the same "
+        "window that chose the band, so each row is in-sample for the "
+        "selection it describes. On a pre-registered holdout the band stops "
+        "helping. Every row is also survivors-only, so every return is too "
+        "high. "
+        f"Over this window a top-band book returned "
+        f"{top.ann_return * 100:+.1f}%/yr at Sharpe {top.sharpe:.2f} and "
+        f"Sortino {top.sortino:.2f}. SPY returned "
+        f"{spy.ann_return * 100:+.1f}%/yr at Sharpe {spy.sharpe:.2f}. That is "
+        f"a {TOP_BAND_FINAL_MULTIPLE:.2f}x final multiple against SPY's "
+        f"{SPY_FINAL_MULTIPLE:.2f}x, and it beat SPY in {yrs} of {yrs_tot} "
+        "years. "
+        f"The Sharpe result passes a permutation test "
+        f"(p={TOP_BAND_SHARPE_PERMUTATION_P:.3f}, null median "
+        f"{TOP_BAND_SHARPE_NULL_MEDIAN:.3f}, 95th percentile "
+        f"{TOP_BAND_SHARPE_NULL_P95:.3f}). The raw return claim failed the "
+        f"same style of test (p={TOP_BAND_PERMUTATION_P:.3f}). The two "
+        "disagree because a fat right tail inflates mean return and "
+        "volatility together. That can inflate a return statistic by chance, "
+        "but not a ratio of the two."
     )
 
 
@@ -456,10 +467,16 @@ def harvestability_note() -> str:
         f"{PRICE_FLOOR_EXCESS_BEFORE * 100:+.1f}%/yr to {PRICE_FLOOR_EXCESS_AFTER * 100:+.1f}%/yr. "
         f"Refit: rebuilding the model inside a tradeable universe ($5+, $1M book, "
         f"50bps) gives Sharpe {REFIT_TRADEABLE_UNIVERSE_SHARPE:.3f} against SPY's "
-        f"{REFIT_TRADEABLE_UNIVERSE_SPY_SHARPE:.3f}. Max drawdown is worse than SPY's too "
-        "(-30.7% vs -19.2%). Treat this as a risk screen, not a portfolio: the top "
-        "band beat SPY only in a universe that includes sub-$5, thinly-traded names "
-        "at costs and account sizes that make it unrealistic to actually harvest."
+        f"{REFIT_TRADEABLE_UNIVERSE_SPY_SHARPE:.3f}. Max drawdown is worse "
+        "than SPY's too, at -30.7% against -19.2%. "
+        "Holdout: on a period the band was not chosen on, the band stops "
+        "helping. See band_holdout_note() and holdout_note(). "
+        "Survivorship: every return here counts only companies that still "
+        "trade, so all of them are too high. See "
+        "survivorship_correction_note(). "
+        "Treat this as a risk screen and not a portfolio. The top band beat "
+        "SPY only in a universe of sub-$5, thinly traded names, at costs and "
+        "account sizes nobody can use."
     )
 
 
@@ -471,13 +488,13 @@ def top_band_holding_summary() -> str:
     top = next(b for b in BOOK_RESULTS if b.name == "Top band (70-90)")
     spy = next(b for b in BOOK_RESULTS if b.name == "SPY")
     return (
-        f"A top-band-only book measured {top.ann_return * 100:+.1f}%/yr (Sharpe "
-        f"{top.sharpe:.2f}) against SPY's {spy.ann_return * 100:+.1f}%/yr (Sharpe "
-        f"{spy.sharpe:.2f}) and passes a permutation test "
-        f"(p={TOP_BAND_SHARPE_PERMUTATION_P:.3f}) -- but that edge requires "
-        "sub-$5, thinly-traded names, and disappears under realistic cost, "
-        "liquidity, and price-floor limits, so it is a risk screen, not a "
-        "harvestable portfolio (see the panel below)."
+        f"In sample, a top-band book measured {top.ann_return * 100:+.1f}%/yr "
+        f"at Sharpe {top.sharpe:.2f}, against SPY's "
+        f"{spy.ann_return * 100:+.1f}%/yr at Sharpe {spy.sharpe:.2f}. Do not "
+        "trade on that number. It needs sub-$5, thinly traded names. It "
+        "disappears under real cost, liquidity and price-floor limits. On a "
+        "pre-registered holdout the band stops helping at all. These bands "
+        "rank what to research first, not what to buy. See the panel below."
     )
 
 
@@ -485,36 +502,215 @@ def key_points() -> list[str]:
     """The short list a user should read before acting on this dashboard."""
     best = HORIZON_EXPECTATIONS[0]
     crash_lo, crash_hi = ELEVATED_RISK_CRASH_RATE_RANGE
+    helped, slot_total = BAND_HOLDOUT_SLOTS_HELPED
+    cells, cell_total = EXIT_RULE_CELLS_IMPROVED
+    cut_lo, cut_hi = MEAN_TRADE_HAIRCUT_RANGE
     return [
+        "Use this list to decide where to spend research time. It sorts "
+        "insider cluster buys into bands by how badly they have gone before. "
+        "It does not tell you which ones go up.",
+
         "The cluster-buy event itself is not a buy signal. Held about two "
         f"weeks, the average flagged cluster returns {best.vs_iwm * 100:+.1f}%/yr "
-        "against a small-cap index fund -- statistically indistinguishable from "
-        "just owning the index. Held longer, it does worse, not better.",
+        "against a small-cap index fund. That is indistinguishable from owning "
+        "the index. Held longer it does worse, not better.",
 
-        "There is no speed advantage. Clusters filed fastest performed the "
-        "same as clusters filed slowest, so there is nothing to be gained by "
-        "reacting to a filing sooner.",
+        "A higher percentile is not a better candidate. The 70th to 90th "
+        "percentile band measures best. The top 10% measures worse than that "
+        "band on both median return and crash rate, in 5 of 7 out-of-sample "
+        "years. Do not sort descending and take the top rows.",
+
+        "The bottom 30% is the durable result. Its chance of a loss worse "
+        f"than 30% in 21 days stayed between {crash_lo * 100:.1f}% and "
+        f"{crash_hi * 100:.1f}% in every out-of-sample year measured. Skip "
+        "those names, or research them knowing that.",
 
         "None of the obvious quality filters work. More insiders, bigger "
-        "dollar amounts, CEO participation and ten-percent-owner involvement "
-        "were all tested and all came back flat.",
+        "dollar amounts, CEO participation, ten-percent-owner involvement and "
+        "reacting faster to a filing were all tested. All came back flat.",
 
-        "The score shown here is banded, not a straight ranking -- a higher "
-        "percentile is not a better candidate. The bottom 30% ('elevated "
-        f"risk') reliably has the highest chance of a large loss, between "
-        f"{crash_lo * 100:.1f}% and {crash_hi * 100:.1f}% in every out-of-sample "
-        "year measured. The 70th-90th percentile ('top band') is the "
-        "best-measured band, but a book built only from it failed a "
-        "permutation test, so treat this as a guide to what to AVOID, not "
-        "a stock-picking signal.",
+        "The bands do not improve a traded book. On a pre-registered holdout "
+        f"the top band helped at {helped} of {slot_total} position counts "
+        "tested. Treat the bands as a research queue, not a portfolio.",
+
+        f"One mechanical change did survive that holdout: {EXIT_RULE_LABEL}. "
+        f"It beat a fixed 21-day hold in {cells} of {cell_total} tested "
+        f"combinations, by about {EXIT_RULE_MEAN_RETURN_GAIN * 100:.1f} "
+        "percentage points a year. It uses no score from this model.",
 
         f"About {SURVIVORSHIP['frac_tickers_unpriceable'] * 100:.0f}% of the "
-        "companies in the historical data have no price history at all, "
-        "because they stopped trading and the data provider deleted them. "
-        "Every figure above is therefore optimistic by an unknown margin.",
+        "companies in the historical data have no price history, because they "
+        f"stopped trading. All {DEAD_TICKERS_RESOLVED:,} were traced. "
+        f"{DEAD_TICKER_FATES['Acquired'] * 100:.0f}% were acquired and "
+        f"{DEAD_TICKER_FATES['Bankrupt'] * 100:.0f}% went bankrupt. Adding "
+        f"them back cuts the mean trade by {abs(cut_lo) * 100:.1f} to "
+        f"{abs(cut_hi) * 100:.1f} percentage points, so every return figure "
+        "here is too high.",
 
         "No configuration tested produced a portfolio that beat an index fund "
-        "in a way that survived changing the model's random seed. Treat any "
-        "such claim from this pipeline with suspicion unless it reports a "
-        "seed sweep.",
+        "out of sample. Treat any such claim from this pipeline with suspicion "
+        "unless it reports a holdout and a seed sweep.",
+    ]
+
+
+# ---------------------------------------------------------------------------
+# THE PRE-REGISTERED HOLDOUT, AND WHAT SURVIVED IT.
+#
+# Read this section before you quote any number from BOOK_RESULTS. Those book
+# numbers are measured over the same window that chose the band, so they are
+# in-sample for the selection they describe. This section is not.
+#
+# Source: RESEARCH_NOTES.md, "The holdout test: the search overfits, the exit
+# rule survives (2026-08-20)" and "Settling the two holdout tables
+# (2026-08-25)". Data: research_10861rows_20260813.parquet, 10-seed ensemble
+# of C19_month_vol_rel_a35_live. Selection 2020-01..2022-12, 4,161 events.
+# Holdout 2023-01..2026-08, 5,016 events. Daily-marked slot-limited book,
+# per-row estimated trading costs. Reproduce with tools/final_search.py and
+# tools/settle_band.py.
+# ---------------------------------------------------------------------------
+HOLDOUT_PROVENANCE = (
+    "research_10861rows_20260813.parquet, selection 2020-01..2022-12 "
+    "(4,161 events), holdout 2023-01..2026-08 (5,016 events), daily-marked "
+    "slot-limited book, per-row estimated trading costs"
+)
+HOLDOUT_MEASURED_ON = "2026-08-25"
+
+# The search that got caught. 7,560 configurations of universe filter, band,
+# exit rule and slot count were scored on the selection window. The single
+# best one was then scored once on the holdout, and the top ten were scored
+# to show whether the whole region survived. None of them did.
+SEARCH_CONFIGS_TRIED = 7560
+SEARCH_SELECTION_SHARPE = 1.437
+SEARCH_HOLDOUT_SHARPE = 0.400
+SEARCH_TOP10_HOLDOUT_SHARPE_RANGE = (-0.009, 0.676)
+HOLDOUT_SPY_ANN = 0.2315
+HOLDOUT_SPY_SHARPE = 1.456
+
+# What generalized. A trailing stop replaced the fixed 21-day hold on the
+# WHOLE unselected population, with no model score involved.
+EXIT_RULE_LABEL = (
+    "a 15% trailing stop, armed once a position is up 10%, capped at 126 days"
+)
+EXIT_RULE_FIXED_ANN = -0.0165
+EXIT_RULE_FIXED_SHARPE = 0.002
+EXIT_RULE_TRAIL_ANN = 0.1267
+EXIT_RULE_TRAIL_SHARPE = 0.892
+# tools/settle_band.py swept 2 exit rules x 5 bands x 5 slot counts over the
+# holdout. The trailing stop beat the fixed hold in every cell.
+EXIT_RULE_CELLS_IMPROVED = (25, 25)
+EXIT_RULE_MEAN_SHARPE_GAIN = 0.637
+EXIT_RULE_MEAN_RETURN_GAIN = 0.1075
+
+# What did NOT generalize: the band. In that same 50-cell sweep the shipped
+# 70-90 band beat an unbanded book at 5 slots and lost at 10, 15, 20 and 30.
+# A percentile band must not depend on how many positions a book carries, so
+# the sign flip means noise. This is why the product ranks for triage and
+# makes no portfolio claim.
+BAND_HOLDOUT_MEAN_SHARPE_DELTA = -0.137
+BAND_HOLDOUT_SLOTS_HELPED = (1, 5)
+
+
+# ---------------------------------------------------------------------------
+# THE SURVIVORSHIP CORRECTION.
+#
+# SURVIVORSHIP above states the size of the hole. This states what fell into
+# it. All 2,455 tickers with no price history were resolved against EDGAR.
+# The result overturns an older assumption in RESEARCH_NOTES.md that the
+# missing rows would all land in the bottom deciles. They would not.
+# Acquisitions close at a premium, so the bias runs in both directions.
+#
+# Source: RESEARCH_NOTES.md, "Six new free data sources, and the survivorship
+# correction that matters most (2026-08-21)". Reproduce with
+# tools/delisting_fate.py, tools/survivorship_remeasure.py and
+# tools/survivorship_bound.py.
+# ---------------------------------------------------------------------------
+SURVIVORSHIP_MEASURED_ON = "2026-08-21"
+DEAD_TICKERS_RESOLVED = 2455
+DEAD_TICKER_FATES: dict[str, float] = {
+    "Acquired": 0.316,
+    "Renamed, still trading": 0.264,
+    "Still filing, no ticker": 0.203,
+    "Bankrupt": 0.130,
+    "Delisted, unexplained": 0.083,
+    "Unknown": 0.004,
+}
+MEASURED_POPULATION = 10861
+RECOVERED_EVENTS = 4214
+TRUE_POPULATION = 15075
+UNPRICEABLE_EVENTS = 3060
+# Mean trade under the book's exit rule, survivors only, then the bound once
+# the unpriceable rows get outcomes under three explicit scenarios. Only the
+# mean is informative here. The median is pinned by a constant assigned to
+# 1,299 acquisitions and is an artifact of that assumption.
+MEAN_TRADE_SURVIVORS_ONLY = 0.0452
+MEAN_TRADE_HAIRCUT_RANGE = (-0.0454, -0.1239)  # optimistic .. pessimistic
+
+
+def holdout_note() -> str:
+    """What a pre-registered holdout did to every searched result."""
+    lo, hi = SEARCH_TOP10_HOLDOUT_SHARPE_RANGE
+    return (
+        f"A search over {SEARCH_CONFIGS_TRIED:,} configurations scored Sharpe "
+        f"{SEARCH_SELECTION_SHARPE:.3f} on the window that chose it. On a "
+        f"pre-registered holdout the same configuration scored "
+        f"{SEARCH_HOLDOUT_SHARPE:.3f}. The whole top-ten region failed with it, "
+        f"at Sharpe {lo:+.3f} to {hi:+.3f}. Every one landed below SPY's "
+        f"{HOLDOUT_SPY_SHARPE:.3f} over those same years. One bad draw is "
+        "noise. A whole region collapsing is the search getting caught."
+    )
+
+
+def exit_rule_note() -> str:
+    """The one change that survived the holdout. It needs no model."""
+    cells, total = EXIT_RULE_CELLS_IMPROVED
+    return (
+        f"One mechanical change did survive: {EXIT_RULE_LABEL}. On the "
+        f"unselected population it moved the book from "
+        f"{EXIT_RULE_FIXED_ANN * 100:+.2f}%/yr to "
+        f"{EXIT_RULE_TRAIL_ANN * 100:+.2f}%/yr, and Sharpe from "
+        f"{EXIT_RULE_FIXED_SHARPE:.3f} to {EXIT_RULE_TRAIL_SHARPE:.3f}, with a "
+        f"smaller drawdown. Across {total} band and slot-count combinations it "
+        f"improved {cells}, by an average of "
+        f"{EXIT_RULE_MEAN_RETURN_GAIN * 100:.2f} percentage points a year. It "
+        "uses no model score at all."
+    )
+
+
+def band_holdout_note() -> str:
+    """Why the bands are a triage tool and not a portfolio rule."""
+    helped, total = BAND_HOLDOUT_SLOTS_HELPED
+    return (
+        "The band does not improve a traded book out of sample. Against an "
+        f"unbanded book on the holdout, the 70-90 band helped at {helped} of "
+        f"{total} slot counts tested. Its mean Sharpe difference was "
+        f"{BAND_HOLDOUT_MEAN_SHARPE_DELTA:+.3f}. A percentile band must not "
+        "depend on how many positions a book carries, so read that sign flip "
+        "as noise. Use the bands to choose what to research and what to skip."
+    )
+
+
+def survivorship_correction_note() -> str:
+    """What happened to the companies the price data lost."""
+    lo, hi = MEAN_TRADE_HAIRCUT_RANGE
+    return (
+        f"All {DEAD_TICKERS_RESOLVED:,} tickers with no price history were "
+        f"resolved against EDGAR. {DEAD_TICKER_FATES['Acquired'] * 100:.1f}% "
+        f"were acquired and {DEAD_TICKER_FATES['Bankrupt'] * 100:.1f}% went "
+        "bankrupt, so the bias runs both ways and not only downward. "
+        f"Recovering them raises the true population from "
+        f"{MEASURED_POPULATION:,} events to {TRUE_POPULATION:,}. Under three "
+        f"explicit scenarios the mean trade falls by {abs(lo) * 100:.1f} to "
+        f"{abs(hi) * 100:.1f} percentage points from its survivors-only value "
+        f"of {MEAN_TRADE_SURVIVORS_ONLY * 100:+.2f}%. Even the most generous "
+        "scenario erases the mean trade profit."
+    )
+
+
+def dead_ticker_rows() -> list[tuple[str, str]]:
+    """(fate, share) as display strings, largest share first."""
+    return [
+        (fate, f"{share * 100:.1f}%")
+        for fate, share in sorted(
+            DEAD_TICKER_FATES.items(), key=lambda kv: -kv[1]
+        )
     ]

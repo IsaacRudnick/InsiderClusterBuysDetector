@@ -507,6 +507,19 @@ def render_html(payload: dict) -> str:
     )
     book_caveats = _esc(findings.harvestability_note())
     book_prov = _esc(findings.BOOK_PROVENANCE)
+    # The holdout and survivorship panels. Both correct the table above, so
+    # they render in the SAME details block, never as an optional extra the
+    # reader can miss. Text and numbers come from findings.py, never inline.
+    book_holdout = (
+        f"{_esc(findings.holdout_note())} {_esc(findings.band_holdout_note())}"
+    )
+    book_exit = _esc(findings.exit_rule_note())
+    book_surv = _esc(findings.survivorship_correction_note())
+    dead_rows_html = "".join(
+        f"<tr><td>{_esc(fate)}</td><td>{_esc(share)}</td></tr>"
+        for fate, share in findings.dead_ticker_rows()
+    )
+    holdout_prov = _esc(findings.HOLDOUT_PROVENANCE)
 
     # Legend substitutions for the four current bands, from the same single
     # source as the banner (findings.py). Each row's numbers come straight
@@ -910,7 +923,7 @@ def render_html(payload: dict) -> str:
 </details>
 
 <details class="expect">
-  <summary>What holding each band would have returned &mdash; measured, {findings.BOOK_MEASURED_ON}</summary>
+  <summary>What each band returned, and what survived out of sample &mdash; measured, {findings.HOLDOUT_MEASURED_ON}</summary>
   <div class="expect-body">
     <p class="expect-lead">{book_lead}</p>
     <table class="expect-table">
@@ -920,7 +933,19 @@ def render_html(payload: dict) -> str:
     </table>
     <h4>Why this is a risk screen, not a portfolio</h4>
     <p class="expect-lead">{book_caveats}</p>
-    <p class="expect-note">Source: {book_prov}. Measured {findings.BOOK_MEASURED_ON}.
+    <h4>What the pre-registered holdout did to it</h4>
+    <p class="expect-lead">{book_holdout}</p>
+    <h4>The one change that survived</h4>
+    <p class="expect-lead">{book_exit}</p>
+    <h4>Survivorship: why every return above is too high</h4>
+    <p class="expect-lead">{book_surv}</p>
+    <table class="expect-table">
+      <thead><tr><th>What happened to the delisted companies</th><th>Share</th></tr></thead>
+      <tbody>{dead_rows_html}</tbody>
+    </table>
+    <p class="expect-note">Sources: {book_prov}, measured {findings.BOOK_MEASURED_ON}.
+    Holdout: {holdout_prov}, measured {findings.HOLDOUT_MEASURED_ON}.
+    Survivorship measured {findings.SURVIVORSHIP_MEASURED_ON}.
     Full record in RESEARCH_NOTES.md.</p>
   </div>
 </details>
