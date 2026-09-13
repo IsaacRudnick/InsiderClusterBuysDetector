@@ -317,15 +317,33 @@ def discover_filings(lookback_days: int) -> list[dict]:
             all_rows.extend(fetch_daily_index(day))
         except Exception as exc:
             log.error("Failed to fetch daily index for %s: %s", day, exc)
+    # Deduplicate by ACCESSION, not by file_name. The daily index lists one
+    # row per CIK involved in a filing -- once under the issuer and once under
+    # each reporting owner -- and each row carries a different
+    # edgar/data/<cik>/<accession>.txt path for the same document. Deduping on
+    # the path therefore never fires: a typical Form 4 was parsed twice, and
+    # one with several reporting owners up to ten times, so every transaction
+    # was counted that many times and every shares/value total was inflated to
+    # match. A single 2026-09-04 index has 934 rows and 458 accessions, every
+    # one of them appearing more than once.
+    #
+    # Keeping the first row is fine: the CIK only feeds _filing_base_url, and
+    # SEC serves a filing under any CIK associated with it.
     seen = set()
     deduped = []
     for r in all_rows:
-        if r["file_name"] in seen:
+        try:
+            key = _accession_from_filename(r["file_name"])
+        except ValueError:
+            # Unparseable path: fall back to the path itself rather than
+            # dropping the filing entirely.
+            key = r["file_name"]
+        if key in seen:
             continue
-        seen.add(r["file_name"])
+        seen.add(key)
         deduped.append(r)
-    log.info("Discovered %d Form 4 filings in last %d days",
-             len(deduped), lookback_days)
+    log.info("Discovered %d Form 4 filings in last %d days (%d index rows)",
+             len(deduped), lookback_days, len(all_rows))
     return deduped
 
 
