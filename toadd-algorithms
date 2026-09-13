@@ -1,0 +1,9 @@
+Gate signal companies by the two signals 
+
+Currently, we backtest several strategies against several selling times. 
+I want to add new strategies AND add new selling methods. 
+
+The new strategies are ones that buy at each signal level. 
+One only buys stocks with a signal >-5, one buys stocks >-4, > -3, ... >10, and so on until the max signal level. 
+
+I believe right now each strategy is tested as selling after 30/90/180/365 days. I want to add ones that only sell at a trailing stop loss of 10%, 20%, and 30%. 
