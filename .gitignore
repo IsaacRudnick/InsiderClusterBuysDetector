@@ -76,3 +76,6 @@ xbrl_cache/
 filing_context_cache/
 # FRED macro series CSVs
 fred_cache/
+
+# Generated from README.md by render_readme.py; regenerate rather than track.
+README.html
