@@ -256,12 +256,24 @@ def resolve(pairs: list[tuple[str, str]], *, workers: int = 6) -> pd.DataFrame:
     return pd.DataFrame([asdict(f) for f in out])
 
 
-def dead_ticker_pairs() -> list[tuple[str, str]]:
-    """(cik, ticker) for every event ticker with no price file."""
-    ev = pd.read_parquet(
-        os.path.join(REPO_ROOT, "clusters_history",
-                     "events_20180813_20260813.parquet")
-    )
+def dead_ticker_pairs(events: str | None = None) -> list[tuple[str, str]]:
+    """(cik, ticker) for every event ticker with no price file.
+
+    `events` defaults to the NEWEST events_*.parquet in clusters_history/
+    rather than a pinned filename. It was hardcoded to
+    events_20180813_20260813.parquet, which meant a rebuilt events file was
+    silently ignored and the dead-ticker set was whatever it had been in
+    August -- including tickers that a later scrape prices fine.
+    """
+    if events is None:
+        d = os.path.join(REPO_ROOT, "clusters_history")
+        cands = sorted(f for f in os.listdir(d)
+                       if f.startswith("events_") and f.endswith(".parquet"))
+        if not cands:
+            raise SystemExit(f"no events_*.parquet in {d}")
+        events = os.path.join(d, cands[-1])
+    print(f"events file: {events}", flush=True)
+    ev = pd.read_parquet(events)
     price_dir = os.path.join(REPO_ROOT, "price_cache")
     have = {f[:-8] for f in os.listdir(price_dir) if f.endswith(".parquet")}
     cik_of = ev.drop_duplicates("ticker").set_index("ticker")["issuer_cik"]
@@ -280,9 +292,10 @@ def main(argv=None) -> int:
     ap.add_argument("--out", default=os.path.join(
         REPO_ROOT, "research_data", "delisting_fate.parquet"))
     ap.add_argument("--limit", type=int, default=0)
+    ap.add_argument("--events", default="")
     args = ap.parse_args(argv)
 
-    pairs = dead_ticker_pairs()
+    pairs = dead_ticker_pairs(args.events or None)
     if args.limit:
         pairs = pairs[: args.limit]
     print(f"resolving the fate of {len(pairs)} dead tickers "
