@@ -724,23 +724,33 @@ HOLDOUT_SPY_SHARPE = 1.442
 EXIT_RULE_LABEL = (
     "a 15% trailing stop, armed once a position is up 10%, capped at 126 days"
 )
-EXIT_RULE_FIXED_ANN = -0.0165
-EXIT_RULE_FIXED_SHARPE = 0.002
-EXIT_RULE_TRAIL_ANN = 0.1267
-EXIT_RULE_TRAIL_SHARPE = 0.892
+# Re-measured 2026-09-14. These four now name their cell explicitly: the
+# "all events" row (the whole unselected population, no model score
+# involved, which is what the sentence above claims) at 20 slots, over the
+# holdout. The previous values could not be traced to a cell of
+# settle_band's 25-cell table -- the published pair (-1.65%, +12.67%) does
+# not match its "all events" row and sits closest to the 50-100 band -- and
+# with the price cache restated (see the reproduction caveat above) the
+# original could not be recovered to check. Pinning the cell in the comment
+# is the fix: an untraceable number is one nobody can re-derive.
+EXIT_RULE_FIXED_ANN = 0.0332
+EXIT_RULE_FIXED_SHARPE = 0.267
+EXIT_RULE_TRAIL_ANN = 0.2571
+EXIT_RULE_TRAIL_SHARPE = 1.662
 # tools/settle_band.py swept 2 exit rules x 5 bands x 5 slot counts over the
 # holdout. The trailing stop beat the fixed hold in every cell.
 EXIT_RULE_CELLS_IMPROVED = (25, 25)
-EXIT_RULE_MEAN_SHARPE_GAIN = 0.637
-EXIT_RULE_MEAN_RETURN_GAIN = 0.1075
+EXIT_RULE_MEAN_SHARPE_GAIN = 0.983
+EXIT_RULE_MEAN_RETURN_GAIN = 0.1711
 
 # What did NOT generalize: the band. In that same 50-cell sweep the shipped
-# 70-90 band beat an unbanded book at 5 slots and lost at 10, 15, 20 and 30.
-# A percentile band must not depend on how many positions a book carries, so
-# the sign flip means noise. This is why the product ranks for triage and
-# makes no portfolio claim.
-BAND_HOLDOUT_MEAN_SHARPE_DELTA = -0.137
-BAND_HOLDOUT_SLOTS_HELPED = (1, 5)
+# 70-90 band now loses to an unbanded book at every one of the 5 slot counts
+# -- previously it won at 5 slots and lost at 10, 15, 20 and 30, and the
+# sign flip was already read as noise. Corrected, there is no flip left to
+# interpret: the band simply does not help. This is why the product ranks
+# for triage and makes no portfolio claim.
+BAND_HOLDOUT_MEAN_SHARPE_DELTA = -0.499
+BAND_HOLDOUT_SLOTS_HELPED = (0, 5)
 
 
 # ---------------------------------------------------------------------------
