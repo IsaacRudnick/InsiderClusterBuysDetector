@@ -288,8 +288,16 @@ def main(argv=None) -> int:
     print(f"holdout   {len(hold)} events  ({hold.event_day.min():%Y-%m-%d}"
           f"..{hold.event_day.max():%Y-%m-%d})\n")
 
-    spy_sel = spy_returns(None, "2018-08-13", "2023-06-30")
-    spy_hold = spy_returns(None, "2023-01-01", "2026-08-12")
+    # The benchmark must span the same days the book does. These were
+    # hardcoded to "2023-06-30" and "2026-08-12", which was correct while the
+    # dataset ended 2026-08-12 and silently wrong afterwards: a dataset built
+    # later gives the BOOK extra months of return that SPY is not credited
+    # with, flattering every excess figure below. Derive the end from the data
+    # instead so the two can never drift apart again.
+    sel_end = sel["entry_day"].max() + pd.Timedelta(days=182)
+    hold_end = hold["entry_day"].max()
+    spy_sel = spy_returns(None, "2018-08-13", sel_end.strftime("%Y-%m-%d"))
+    spy_hold = spy_returns(None, "2023-01-01", hold_end.strftime("%Y-%m-%d"))
 
     print("simulating exit rules over the selection window...", flush=True)
     pre_sel = precompute(sel)
