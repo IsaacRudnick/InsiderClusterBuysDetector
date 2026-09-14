@@ -73,6 +73,7 @@ def tradeable_mask(
 
 def evaluate_universe(
     df: pd.DataFrame, label: str, *, seeds: int, draws: int, cost_bps: float,
+    dataset: str | None = None,
 ) -> dict:
     """Refit the score inside this universe, then grid-search and permute it."""
     if len(df) < 2000:
@@ -87,10 +88,14 @@ def evaluate_universe(
     work["refit"] = rank_average(members)
     work = work.dropna(subset=["refit"])
 
+    # Join the forward returns from the SAME dataset the refit above was
+    # fitted on. This was hardcoded to research_10861rows_20260813.parquet,
+    # so passing --dataset refit the score on the new data and then silently
+    # graded it against the old file's returns.
     prepared = sh.prepare(
         work[["ticker", "event_day", "refit"]],
-        os.path.join(REPO_ROOT, "research_data",
-                     "research_10861rows_20260813.parquet"),
+        dataset or os.path.join(REPO_ROOT, "research_data",
+                                "research_10861rows_20260813.parquet"),
         score_cols=("refit",),
     )
     panel = sh.build_panel(prepared, "refit")
@@ -170,7 +175,7 @@ def main(argv=None) -> int:
         sub = df[tradeable_mask(df, min_price=min_price, capital=capital)] \
             if (min_price or capital) else df
         r = evaluate_universe(sub, label, seeds=args.seeds, draws=args.draws,
-                              cost_bps=cost)
+                              cost_bps=cost, dataset=args.dataset)
         rows.append(r)
         print(f"  {label}: {r.get('rows')} rows, "
               f"Sharpe {r.get('sharpe', float('nan')):+.3f} "
