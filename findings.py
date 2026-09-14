@@ -767,26 +767,33 @@ BAND_HOLDOUT_SLOTS_HELPED = (0, 5)
 # tools/delisting_fate.py, tools/survivorship_remeasure.py and
 # tools/survivorship_bound.py.
 # ---------------------------------------------------------------------------
-SURVIVORSHIP_MEASURED_ON = "2026-08-21"
-DEAD_TICKERS_RESOLVED = 2455
+# Re-resolved 2026-09-14 against the corrected events file. The fate MIX is
+# essentially unchanged, which is the expected result and worth stating: a
+# company's fate is a property of the company, not of how many times its
+# Form 4s were counted. All 2,353 dead tickers were found on EDGAR, and 619
+# of the 620 renamed ones still yield real price history under their new
+# symbol -- so the largest correction here continues to run in the
+# FLATTERING direction, not the punishing one.
+SURVIVORSHIP_MEASURED_ON = "2026-09-14"
+DEAD_TICKERS_RESOLVED = 2353
 DEAD_TICKER_FATES: dict[str, float] = {
-    "Acquired": 0.316,
+    "Acquired": 0.322,
     "Renamed, still trading": 0.264,
-    "Still filing, no ticker": 0.203,
+    "Still filing, no ticker": 0.195,
     "Bankrupt": 0.130,
-    "Delisted, unexplained": 0.083,
-    "Unknown": 0.004,
+    "Delisted, unexplained": 0.086,
+    "Unknown": 0.003,
 }
-MEASURED_POPULATION = 10861
-RECOVERED_EVENTS = 4214
-TRUE_POPULATION = 15075
-UNPRICEABLE_EVENTS = 3060
+MEASURED_POPULATION = 11158
+RECOVERED_EVENTS = 3875
+TRUE_POPULATION = 15033
+UNPRICEABLE_EVENTS = 2882
 # Mean trade under the book's exit rule, survivors only, then the bound once
 # the unpriceable rows get outcomes under three explicit scenarios. Only the
 # mean is informative here. The median is pinned by a constant assigned to
 # 1,299 acquisitions and is an artifact of that assumption.
-MEAN_TRADE_SURVIVORS_ONLY = 0.0452
-MEAN_TRADE_HAIRCUT_RANGE = (-0.0454, -0.1239)  # optimistic .. pessimistic
+MEAN_TRADE_SURVIVORS_ONLY = 0.0443
+MEAN_TRADE_HAIRCUT_RANGE = (-0.0430, -0.1147)  # optimistic .. pessimistic
 
 
 def holdout_note() -> str:
