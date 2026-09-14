@@ -495,8 +495,13 @@ PRICE_FLOOR_EXCESS_BEFORE = 0.062  # annual excess over SPY, no price floor
 PRICE_FLOOR_EXCESS_AFTER = 0.026   # annual excess over SPY, $5 minimum entry price
 # Model refit inside a realistic tradeable universe ($5+ price floor, $1M
 # book, 50bps round trip) rather than the full universe measured above.
-REFIT_TRADEABLE_UNIVERSE_SHARPE = 0.650
-REFIT_TRADEABLE_UNIVERSE_SPY_SHARPE = 1.237
+# Re-measured 2026-09-14; the regeneration reproduced the previous pair
+# exactly from the old data first (0.6500 and 1.2370). The refit book still
+# lands well below an index fund, now beating SPY in 3 of 7 years rather
+# than 4, and its own permutation test weakens from p=0.263 to p=0.488 --
+# indistinguishable from the same search run on shuffled scores.
+REFIT_TRADEABLE_UNIVERSE_SHARPE = 0.630
+REFIT_TRADEABLE_UNIVERSE_SPY_SHARPE = 1.229
 
 
 def book_rows() -> list[tuple[str, str, str, str, str, str, str]]:
