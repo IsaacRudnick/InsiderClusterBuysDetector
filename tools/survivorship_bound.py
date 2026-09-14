@@ -125,8 +125,15 @@ def dead_cluster_events(fate: pd.DataFrame, recovered: dict) -> pd.DataFrame:
     """
     from tools import event_definition_sweep as eds
 
-    ev_path = os.path.join(REPO_ROOT, "clusters_history",
-                           "events_20180813_20260813.parquet")
+    # Newest events file, not a pinned one -- see delisting_fate's
+    # dead_ticker_pairs for the same fix and the reason.
+    _ev_dir = os.path.join(REPO_ROOT, "clusters_history")
+    _ev_files = sorted(f for f in os.listdir(_ev_dir)
+                       if f.startswith("events_") and f.endswith(".parquet"))
+    if not _ev_files:
+        raise SystemExit(f"no events_*.parquet in {_ev_dir}")
+    ev_path = os.path.join(_ev_dir, _ev_files[-1])
+    print(f"events file: {ev_path}", flush=True)
     df = eds.load_qualifying_rows(ev_path)
     dead = set(fate["event_ticker"])
     df = df[df["ticker"].isin(dead)]
