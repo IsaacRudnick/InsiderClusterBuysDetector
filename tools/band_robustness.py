@@ -1,7 +1,9 @@
 """Every way the chosen band could be an artifact, tested one at a time.
 
 The band backtest says holding the 80th-90th percentile slice of the ensemble
-ranking beat SPY by ~20%/yr. RESEARCH_NOTES.md contains four separate
+ranking beat SPY by ~20%/yr. (That slice is NOT the one the product ships --
+findings.BANDS' top_band is 70-90, which this module now audits by default.
+See the comment on BAND_LO.) RESEARCH_NOTES.md contains four separate
 occasions on which a number that good turned out to be an artifact of the
 measurement rather than a property of the world. This module runs the specific
 checks those occasions produced, and a result is only worth quoting if it
@@ -43,7 +45,20 @@ from tools import band_backtest as bb  # noqa: E402
 from tools import run_score_lab as lab  # noqa: E402
 from tools import score_lab as sl  # noqa: E402
 
-BAND_LO, BAND_HI = 0.80, 0.90
+# The band under test. This MUST track the band the product actually ships
+# (findings.BANDS' top_band), or this module audits a slice no user ever
+# sees. It said 0.80, 0.90 until 2026-09-14 while top_band shipped as
+# 70-90, and this module's output was transcribed into findings.py's
+# TOP_BAND_ANNUALIZED_EXCESS / TOP_BAND_PERMUTATION_P under a 70-90 label --
+# so the product quoted the 80-90 band's +19.77%/yr and p=0.435 as though
+# they described the band it ranks by. The shipped 70-90 band measures
+# +14.07%/yr at p=0.745 on the same data: a weaker apparent edge that fails
+# the same test more decisively, so the product's "no index-beating claim"
+# conclusion was right for the wrong numbers. Override on the command line
+# to audit a different slice; do not change the default without changing
+# findings.BANDS to match.
+DEFAULT_BAND_LO, DEFAULT_BAND_HI = 0.70, 0.90
+BAND_LO, BAND_HI = DEFAULT_BAND_LO, DEFAULT_BAND_HI
 PPY = 252.0 / bb.HORIZON
 
 
@@ -213,7 +228,12 @@ def main(argv=None) -> int:
     ap.add_argument("--dataset", default=os.path.join(
         REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
     ap.add_argument("--seeds", type=int, default=10)
+    ap.add_argument("--band-lo", type=float, default=DEFAULT_BAND_LO)
+    ap.add_argument("--band-hi", type=float, default=DEFAULT_BAND_HI)
     args = ap.parse_args(argv)
+
+    global BAND_LO, BAND_HI
+    BAND_LO, BAND_HI = args.band_lo, args.band_hi
 
     from tools.ship_candidate import SHIP_CANDIDATE, rank_average
 
