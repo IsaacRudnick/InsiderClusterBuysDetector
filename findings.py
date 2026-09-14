@@ -245,12 +245,32 @@ ELEVATED_RISK_CRASH_RATE_BY_YEAR: dict[int, float] = {
 }
 
 # A 70-90 (top_band) book looked like an index-beater and was not: it
-# measured +19.77%/yr over SPY, then failed a permutation test -- re-running
-# the same band search on randomly shuffled scores produces a result this
-# large or larger 43.5% of the time. Kept here so the product never states an
-# index-beating claim from this ranking.
-TOP_BAND_ANNUALIZED_EXCESS = 0.1977
-TOP_BAND_PERMUTATION_P = 0.435
+# measures +5.78%/yr over SPY and fails a permutation test outright --
+# re-running the same band search on randomly shuffled scores produces a
+# result this large or larger 100% of the time. Kept here so the product
+# never states an index-beating claim from this ranking.
+#
+# TWO CORRECTIONS LANDED HERE ON 2026-09-14, and they compound.
+#
+# First, ATTRIBUTION. The old +19.77%/yr and p=0.435 were never the 70-90
+# band's numbers. tools/band_robustness.py tested the 80-90 slice
+# (BAND_LO/BAND_HI = 0.80, 0.90) while top_band has shipped as 70-90 since
+# 2026-08-20, and its output was transcribed here under a 70-90 label. On
+# the old data the shipped 70-90 band measured +14.07%/yr at p=0.745, not
+# +19.77%/yr at p=0.435. band_robustness now defaults to the shipped band so
+# the two cannot drift apart again.
+#
+# Second, the DOUBLE-COUNT correction (see the module header). On corrected
+# data the shipped band measures +5.78%/yr at p=1.000 -- below the null
+# median of +18.80%/yr, meaning the shuffled-score search beats the real
+# score every time.
+#
+# The product's conclusion never depended on either error: no index-beating
+# claim was being made, and none is made now. But the claim is no longer a
+# close call. It is not that the edge fails a significance bar; it is that
+# there is no edge to test.
+TOP_BAND_ANNUALIZED_EXCESS = 0.0578
+TOP_BAND_PERMUTATION_P = 1.000
 
 # Survivorship, re-measured on the current events file. Stated in the
 # product because it caps how much any absolute number here can be trusted.
@@ -357,7 +377,7 @@ def top_band_permutation_note() -> str:
         f"A top-band-only book measured {TOP_BAND_ANNUALIZED_EXCESS * 100:+.2f}%/yr "
         f"over SPY, then failed a permutation test (p={TOP_BAND_PERMUTATION_P:.3f} "
         "-- re-running the same band search on shuffled scores produces a result "
-        "this large nearly as often as not). No index-beating claim is made."
+        "this large or larger every time). No index-beating claim is made."
     )
 
 
@@ -448,14 +468,23 @@ TOP_BAND_SHARPE_NULL_P95 = 1.236
 # Harvestability caveats. Every one of these MUST travel with the headline
 # Sharpe/return numbers above wherever they are shown -- this result is a
 # risk screen, not a harvestable portfolio, and these are why.
-COST_SHARPE_BY_BPS: dict[int, float] = {20: 1.303, 50: 1.147, 100: 0.886}
+# Re-measured 2026-09-14. These are cut on sharpe_lab's period grid, which
+# is not byte-identical to band_backtest's grid used for BOOK_RESULTS above
+# -- the two agreed on the old data (SPY Sharpe 1.192 either way) and differ
+# slightly on the new (1.193 vs 1.163). Each constant is kept on the grid
+# that originally produced it, and both grids agree on the conclusion.
+#
+# The cost breakeven moved from "under 50bps" to "under 20bps": the book now
+# fails to beat SPY's Sharpe even at the repo's own optimistic 20bps
+# convention, where it previously cleared it.
+COST_SHARPE_BY_BPS: dict[int, float] = {20: 1.123, 50: 0.941, 100: 0.639}
 # Position capped at 10% of a name's trailing 20-day dollar volume. SPY's
-# Sharpe (1.192) is above every capital size tested here.
+# Sharpe (1.163) is above every capital size tested here.
 LIQUIDITY_SHARPE_BY_CAPITAL: dict[str, float] = {
-    "$100k": 1.107, "$1M": 0.982, "$25M": 0.750,
+    "$100k": 1.063, "$1M": 0.943, "$25M": 0.857,
 }
-PRICE_FLOOR_EXCESS_BEFORE = 0.141  # annual excess over SPY, no price floor
-PRICE_FLOOR_EXCESS_AFTER = 0.032   # annual excess over SPY, $5 minimum entry price
+PRICE_FLOOR_EXCESS_BEFORE = 0.062  # annual excess over SPY, no price floor
+PRICE_FLOOR_EXCESS_AFTER = 0.026   # annual excess over SPY, $5 minimum entry price
 # Model refit inside a realistic tradeable universe ($5+ price floor, $1M
 # book, 50bps round trip) rather than the full universe measured above.
 REFIT_TRADEABLE_UNIVERSE_SHARPE = 0.650
