@@ -668,22 +668,56 @@ def key_points() -> list[str]:
 # tools/settle_band.py.
 # ---------------------------------------------------------------------------
 HOLDOUT_PROVENANCE = (
-    "research_10861rows_20260813.parquet, selection 2020-01..2022-12 "
-    "(4,161 events), holdout 2023-01..2026-08 (5,016 events), daily-marked "
+    "research_11158rows_20260914.parquet, selection 2020-01..2022-12 "
+    "(4,242 events), holdout 2023-01..2026-09 (5,289 events), daily-marked "
     "slot-limited book, per-row estimated trading costs"
 )
-HOLDOUT_MEASURED_ON = "2026-08-25"
+HOLDOUT_MEASURED_ON = "2026-09-14"
+
+# A REPRODUCTION CAVEAT THAT APPLIES TO THIS SECTION ONLY. Every other
+# number in this module was re-measured by first reproducing its published
+# value exactly from the old data, so that any difference was provably the
+# data correction. That check is not available here, and the reason is worth
+# recording: this section is the only one whose computation re-reads live
+# daily bars from price_cache/ (via tools/exit_lab.py's path simulation)
+# rather than the forward returns frozen into the research parquet. The
+# 2026-09-14 rebuild refetched and split-adjusted 4,944 of 5,259 cached
+# tickers, so the price paths behind the 2026-08-25 figures no longer exist
+# on disk and cannot be recovered. The numbers below are measured on
+# corrected data with today's cache; they are NOT a like-for-like comparison
+# against the old ones, and that is a limit of the archive, not of the
+# result.
+#
+# Two things were confirmed anyway: the grid is still exactly
+# 3x3x2x3x2x5x2x7 = 7,560 configurations, and the holdout SPY figures
+# reproduce (+22.74%/1.442 against a published +23.15%/1.456, the small gap
+# being a month of extra data).
 
 # The search that got caught. 7,560 configurations of universe filter, band,
 # exit rule and slot count were scored on the selection window. The single
 # best one was then scored once on the holdout, and the top ten were scored
 # to show whether the whole region survived. None of them did.
 SEARCH_CONFIGS_TRIED = 7560
-SEARCH_SELECTION_SHARPE = 1.437
-SEARCH_HOLDOUT_SHARPE = 0.400
-SEARCH_TOP10_HOLDOUT_SHARPE_RANGE = (-0.009, 0.676)
-HOLDOUT_SPY_ANN = 0.2315
-HOLDOUT_SPY_SHARPE = 1.456
+SEARCH_SELECTION_SHARPE = 1.225
+SEARCH_HOLDOUT_SHARPE = -0.176
+SEARCH_TOP10_HOLDOUT_SHARPE_RANGE = (-0.176, 0.442)
+HOLDOUT_SPY_ANN = 0.2274
+HOLDOUT_SPY_SHARPE = 1.442
+
+# The correction made this section's own point more sharply. The winning
+# configuration no longer merely fails to generalise -- it LOSES money out
+# of sample: -2.81%/yr, ending at 0.90x against SPY's 2.11x over the same
+# days. The whole top-10 neighbourhood still collapses, from a selection
+# Sharpe band of 1.15..1.23 to a holdout band of -0.18..0.44.
+#
+# The search also picks a different winner now, and why is instructive. Its
+# universe filters are DOLLAR-denominated ($0.25M, $1M of cluster buying),
+# so under the double-count those thresholds were effectively half as
+# strict. The old search's winner swept in 1,987 events on a loose
+# "n>=2,$0.25M" universe; corrected, the same threshold admits 107 events on
+# "n>=4,$0.25M,officer,span<=3". A dollar filter applied to doubled dollars
+# is not the filter it claims to be, which is the one place in this project
+# where the double-count changed a SEARCH and not just a measurement.
 
 # What generalized. A trailing stop replaced the fixed 21-day hold on the
 # WHOLE unselected population, with no model score involved.

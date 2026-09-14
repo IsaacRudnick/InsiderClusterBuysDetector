@@ -324,7 +324,8 @@ def main(argv=None) -> int:
     print("\nsimulating the same exit rules over the holdout...", flush=True)
     pre_hold = precompute(hold)
     hs = evaluate_holdout(hold, pre_hold, spy_hold, winner)
-    print(f"\n===== HOLDOUT 2023-01-01 .. 2026-08-12, scored once =====")
+    print(f"\n===== HOLDOUT {HOLDOUT_START:%Y-%m-%d} .. "
+          f"{hold['event_day'].max():%Y-%m-%d}, scored once =====")
     if not hs:
         print("  the winning configuration produced no book in the holdout")
         return 0
