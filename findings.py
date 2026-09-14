@@ -27,14 +27,23 @@ from dataclasses import dataclass
 
 # Source for every number in this module unless stated otherwise:
 # RESEARCH_NOTES.md, section "Does a ranking exist? Yes. Does it beat an ETF?
-# No. (2026-08-13)". Underlying data: research_groupE_10905rows_20260809
-# .parquet, 10,905 cluster episodes, event days 2018-08 .. 2026-08,
+# No. (2026-08-13)", RE-MEASURED 2026-09-14 on research_11158rows_20260914
+# .parquet, 11,158 cluster episodes, event days 2018-09 .. 2026-09,
 # expanding-window out-of-sample.
+#
+# WHY THE RE-MEASUREMENT. Every figure in this module up to 2026-09-14 was
+# computed on data in which each Form 4 was counted about twice: the SEC
+# daily index lists one row per CIK involved in a filing, and discovery
+# deduplicated by path rather than by accession, so every dollar amount was
+# roughly doubled. The fix and its regression test are in
+# insider_cluster_buys.discover_filings. Returns and win rates barely moved
+# (they never depended on the dollar columns); the dollar-weighted
+# survivorship figure moved materially. See each section for before/after.
 PROVENANCE = (
-    "research_groupE_10905rows_20260809.parquet, 10,905 cluster episodes, "
-    "2018-08..2026-08, expanding-window out-of-sample"
+    "research_11158rows_20260914.parquet, 11,158 cluster episodes, "
+    "2018-09..2026-09, expanding-window out-of-sample"
 )
-MEASURED_ON = "2026-08-13"
+MEASURED_ON = "2026-09-14"
 
 
 @dataclass(frozen=True)
@@ -60,12 +69,18 @@ class HorizonExpectation:
 # tell a user: a fresh cluster is worth about a small-cap index fund if you
 # hold it ~2 weeks, and progressively less the longer you hold. There is no
 # post-filing drift to capture -- the curve only slopes down.
+# The 126- and 252-day IWM/IWC cells were float("nan") until 2026-09-14 --
+# not because the question was unanswerable but because the IWM/IWC price
+# cache did not reach far enough to answer it. It does now, so they are
+# measured rather than "n/a"; the curve slopes down against all three
+# yardsticks, which is a stronger statement than the one this table used to
+# be able to make.
 HORIZON_EXPECTATIONS: tuple[HorizonExpectation, ...] = (
-    HorizonExpectation(10, -0.0789, -0.0069, -0.0145, 0.482),
-    HorizonExpectation(21, -0.1282, -0.0652, -0.0694, 0.463),
-    HorizonExpectation(63, -0.1417, -0.1073, -0.1145, 0.439),
-    HorizonExpectation(126, -0.1654, float("nan"), float("nan"), 0.410),
-    HorizonExpectation(252, -0.1702, float("nan"), float("nan"), 0.385),
+    HorizonExpectation(10, -0.0805, -0.0040, -0.0145, 0.484),
+    HorizonExpectation(21, -0.1252, -0.0625, -0.0679, 0.466),
+    HorizonExpectation(63, -0.1354, -0.1060, -0.1145, 0.441),
+    HorizonExpectation(126, -0.1623, -0.1205, -0.1280, 0.411),
+    HorizonExpectation(252, -0.1671, -0.1278, -0.1394, 0.390),
 )
 
 # Benchmark CAGRs over the measured window (2018-08-13..2026-08-12), from
@@ -73,13 +88,19 @@ HORIZON_EXPECTATIONS: tuple[HorizonExpectation, ...] = (
 # much worse than the IWM column: small caps trailed SPY by ~6pp/yr for
 # eight years, and roughly half the apparent "insiders pick badly" result is
 # that size factor, not insider skill.
+# Re-measured 2026-09-14 over 2018-09-14..2026-09-11. All six are now taken
+# over the SAME 2,008 trading days: previously SPY's cache ran a month past
+# the others', so SPY was being credited with 7.99 years of compounding and
+# the rest with 7.91 -- a free advantage to the benchmark the strategy is
+# most often compared against. The size-factor gap this table exists to
+# document survives the correction at 6.4pp/yr.
 BENCHMARK_CAGR: dict[str, float] = {
-    "SPY (large cap)": 0.1516,
-    "RSP (equal-weight S&P)": 0.1182,
-    "MDY (mid cap)": 0.1020,
-    "IWC (micro cap)": 0.0942,
-    "IWM (small cap)": 0.0910,
-    "XBI (biotech)": 0.0688,
+    "SPY (large cap)": 0.1458,
+    "RSP (equal-weight S&P)": 0.1098,
+    "MDY (mid cap)": 0.0916,
+    "IWC (micro cap)": 0.0882,
+    "IWM (small cap)": 0.0822,
+    "XBI (biotech)": 0.0656,
 }
 
 # Refinements that DO NOT work. Each is a median 21-day log-excess vs SPY by
@@ -87,11 +108,11 @@ BENCHMARK_CAGR: dict[str, float] = {
 # Shown in the product because these are exactly the intuitions a user will
 # reach for, and "we checked, it doesn't help" is more useful than silence.
 FLAT_REFINEMENTS: tuple[tuple[str, tuple[float, ...]], ...] = (
-    ("Reacting faster to a fresh filing", (-0.0066, -0.0069, -0.0101, -0.0094)),
-    ("More insiders in the cluster", (-0.0075, -0.0122, -0.0054, -0.0079)),
-    ("Larger total dollars bought", (-0.0109, -0.0081, -0.0063, -0.0074)),
-    ("A higher CEO share of the buying", (-0.0105, -0.0118, -0.0031, -0.0075)),
-    ("More ten-percent owners", (-0.0092, -0.0069, -0.0094, -0.0074)),
+    ("Reacting faster to a fresh filing", (-0.0074, -0.0053, -0.0093, -0.0089)),
+    ("More insiders in the cluster", (-0.0057, -0.0124, -0.0049, -0.0075)),
+    ("Larger total dollars bought", (-0.0105, -0.0074, -0.0063, -0.0065)),
+    ("A higher CEO share of the buying", (-0.0095, -0.0128, -0.0016, -0.0067)),
+    ("More ten-percent owners", (-0.0079, -0.0070, -0.0088, -0.0076)),
 )
 
 # The shipped production model is research.model.PRODUCTION_SCORE_MODEL,
@@ -214,10 +235,17 @@ TOP_BAND_PERMUTATION_P = 0.435
 
 # Survivorship, re-measured on the current events file. Stated in the
 # product because it caps how much any absolute number here can be trusted.
+# Re-measured 2026-09-14 on events_20180914_20260914.parquet against the
+# current price cache. The DOLLAR figure moved the most of any number in this
+# module: 0.271 -> 0.322. The old double-count was not spread evenly over
+# priceable and unpriceable tickers, so it was masking how much of the
+# insider dollar flow sits on companies whose prices cannot be recovered.
+# Survivorship bias here is worse than this project previously reported, and
+# every absolute return in this module is correspondingly more optimistic.
 SURVIVORSHIP = {
-    "frac_tickers_unpriceable": 0.332,
-    "frac_buy_rows_unpriceable": 0.249,
-    "frac_buy_dollars_unpriceable": 0.271,
+    "frac_tickers_unpriceable": 0.318,
+    "frac_buy_rows_unpriceable": 0.211,
+    "frac_buy_dollars_unpriceable": 0.322,
 }
 
 # Round-trip cost assumed in every net figure quoted above (backtest.py's
