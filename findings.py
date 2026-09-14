@@ -139,6 +139,17 @@ SHIPPED_MODEL_YEARS_POSITIVE = (1, 7)
 # below (BANDS). SHIPPED_MODEL_* is kept, unedited, only so build_html.py can
 # still render a "top_decile"/"no_edge" verdict if an old score bundle is
 # ever loaded -- do not use these numbers for anything new.
+#
+# NOT RE-MEASURED in the 2026-09-14 pass. Every SHIPPED_MODEL_* and
+# PREV_SCORE_* figure was computed on the double-counted data described at
+# the top of this module, and they are deliberately left that way: they
+# describe a model that no longer runs, and re-fitting a retired score to
+# refresh numbers nothing consults would cost an OOF pass for no product
+# benefit. They stay quotable ONLY as the historical record of why that
+# score was retired -- which is a claim about its RANKING, and the ranking
+# is what survived the double-count (see the module header). Do not compare
+# them like-for-like against the NEW_SCORE_* constants below, which were
+# measured on corrected data.
 
 # The ranking that DOES hold up, now SHIPPED. It was a 21-day
 # quantile-regression / month-cohort ranker, not yet running when this note
@@ -161,10 +172,10 @@ RELIABLE_RANKER_NOTE = (
 # C19_month_vol_rel_a35_live.
 # ---------------------------------------------------------------------------
 BAND_PROVENANCE = (
-    "research_10861rows_20260813.parquet, 9,095 cluster episodes, "
+    "research_11158rows_20260914.parquet, 9,371 cluster episodes, "
     "2020-2026, log excess over SPY at 21 trading days, out-of-sample"
 )
-BAND_MEASURED_ON = "2026-08-20"
+BAND_MEASURED_ON = "2026-09-14"
 BAND_MODEL_NAME = "C19_month_vol_rel_a35_live (10-seed ensemble)"
 
 
@@ -188,23 +199,23 @@ class Band:
 # this ships as four bands and not "sort by percentile descending", which is
 # exactly what the retired score above did.
 BANDS: tuple[Band, ...] = (
-    Band("elevated_risk", "Elevated risk", 0, 30, -0.0268, 0.436, 0.0788),
-    Band("middle", "Middle", 30, 70, -0.0083, 0.461, 0.0264),
-    Band("top_band", "Top band", 70, 90, -0.0009, 0.495, 0.0121),
-    Band("above_band", "Above band", 90, 100, -0.0052, 0.481, 0.0297),
+    Band("elevated_risk", "Elevated risk", 0, 30, -0.0268, 0.429, 0.0793),
+    Band("middle", "Middle", 30, 70, -0.0070, 0.467, 0.0243),
+    Band("top_band", "Top band", 70, 90, -0.0003, 0.497, 0.0133),
+    Band("above_band", "Above band", 90, 100, -0.0030, 0.490, 0.0277),
 )
 BANDS_BY_VERDICT: dict[str, "Band"] = {b.verdict: b for b in BANDS}
 
 # New score's quality, for the banner. Monthly-cohort IC (grouped by entry
 # month so no single high-volume month dominates), against forward 21-day
 # log excess over SPY.
-NEW_SCORE_MONTHLY_IC = 0.0883
-NEW_SCORE_IC_T = 5.08
-NEW_SCORE_IC_CI = (0.0537, 0.1196)
+NEW_SCORE_MONTHLY_IC = 0.0874
+NEW_SCORE_IC_T = 5.30
+NEW_SCORE_IC_CI = (0.0544, 0.1183)
 NEW_SCORE_YEARS_POSITIVE = (7, 7)
-NEW_SCORE_VOL_NEUTRAL_IC = 0.0630
-LOW_VOL_RANKER_VOL_NEUTRAL_IC = 0.0145  # plain sort-by-low-volatility, same test
-NEW_SCORE_DECILE_MONOTONICITY = 0.93
+NEW_SCORE_VOL_NEUTRAL_IC = 0.0666
+LOW_VOL_RANKER_VOL_NEUTRAL_IC = 0.0023  # plain sort-by-low-volatility, same test
+NEW_SCORE_DECILE_MONOTONICITY = 0.90
 
 # The score this replaces (the retired top_decile/no_edge verdict),
 # re-measured on the SAME monthly-cohort / volatility-neutral methodology as
@@ -216,13 +227,21 @@ PREV_SCORE_YEARS_POSITIVE = (2, 7)
 PREV_SCORE_VOL_NEUTRAL_IC = 0.0130  # below LOW_VOL_RANKER_VOL_NEUTRAL_IC
 PREV_SCORE_CRASH_RATE_BOTTOM_TO_TOP_DECILE = (0.029, 0.071)
 
-# The single most durable number this project has produced: the
-# elevated-risk band's chance of a >30% loss within 21 days, by out-of-sample
-# year. Never below 7.3%, never above 9.2%, in any of the 7 years measured.
-ELEVATED_RISK_CRASH_RATE_RANGE = (0.073, 0.092)
+# The most durable number this project has produced: the elevated-risk band's
+# chance of a >30% loss within 21 days, by out-of-sample year. Between 6.6%
+# and 9.9% in every one of the 7 years measured.
+#
+# The pre-2026-09-14 version of this comment claimed a tighter range --
+# "never below 7.3%, never above 9.2%" -- measured on the double-counted
+# data. On corrected data the spread is wider at both ends (2022 fell to
+# 6.6%, 2024 rose to 9.9%). The band still separates crash risk from the
+# rest of the population by roughly 3x in every year, which is the claim the
+# product actually rests on; the old narrow range was tighter than the
+# evidence supports and should not be restated.
+ELEVATED_RISK_CRASH_RATE_RANGE = (0.066, 0.099)
 ELEVATED_RISK_CRASH_RATE_BY_YEAR: dict[int, float] = {
-    2020: 0.0807, 2021: 0.0791, 2022: 0.0745, 2023: 0.0731,
-    2024: 0.0922, 2025: 0.0737, 2026: 0.0766,
+    2020: 0.0905, 2021: 0.0804, 2022: 0.0664, 2023: 0.0701,
+    2024: 0.0993, 2025: 0.0753, 2026: 0.0672,
 }
 
 # A 70-90 (top_band) book looked like an index-beater and was not: it
@@ -361,11 +380,11 @@ def expectation_rows() -> list[tuple[str, str, str, str, str]]:
 # equal weight, 20bps round trip. Measured 2026-08-20.
 # ---------------------------------------------------------------------------
 BOOK_PROVENANCE = (
-    "research_10861rows_20260813.parquet, 10-seed ensemble of "
-    "C19_month_vol_rel_a35_live, 78 non-overlapping 21-trading-day periods, "
+    "research_11158rows_20260914.parquet, 10-seed ensemble of "
+    "C19_month_vol_rel_a35_live, 79 non-overlapping 21-trading-day periods, "
     "equal weight, 20bps round trip"
 )
-BOOK_MEASURED_ON = "2026-08-20"
+BOOK_MEASURED_ON = "2026-09-14"
 
 
 @dataclass(frozen=True)
@@ -382,17 +401,32 @@ class BookResult:
     win_rate: float
 
 
+# RE-MEASURED 2026-09-14 on corrected data, and this is the section the
+# correction hit hardest. The top band fell from 34.5%/yr at Sharpe 1.303 to
+# 24.8%/yr at Sharpe 1.119, and its final multiple from 5.77x to 3.74x.
+#
+# The controls say the move is real and not a window artifact: "All
+# clusters" (0.238 -> 0.238), SPY (0.181 -> 0.180) and IWM (0.156 -> 0.153)
+# barely changed over the same periods. Only the BAND moved, because only
+# the band depends on the ranking, and correcting the double-count turned
+# over 36% of top_band's membership (Spearman 0.935 between the old and new
+# ensemble score; top_band retained 1173 of 1824 names).
+#
+# THE HEADLINE CONSEQUENCE: the top band no longer beats SPY on Sharpe
+# (1.119 vs 1.193). It did before (1.303 vs 1.192), and that was the single
+# apparent exception to this module's "no configuration beats an index fund"
+# statement. The exception is gone. The statement is now unqualified.
 BOOK_RESULTS: tuple[BookResult, ...] = (
-    BookResult("Top band (70-90)", 0.345, 0.230, 1.303, 1.400, -0.307, 0.73),
-    BookResult("All clusters", 0.238, 0.235, 0.917, 1.124, -0.322, 0.58),
-    BookResult("Bottom 30% (elevated risk)", 0.149, 0.340, 0.412, 0.668, -0.576, 0.51),
-    BookResult("SPY", 0.181, 0.141, 1.192, 1.125, -0.192, 0.73),
-    BookResult("IWM", 0.156, 0.202, 0.723, 0.859, -0.273, 0.60),
+    BookResult("Top band (70-90)", 0.248, 0.199, 1.119, 1.078, -0.298, 0.72),
+    BookResult("All clusters", 0.238, 0.229, 0.942, 1.148, -0.312, 0.61),
+    BookResult("Bottom 30% (elevated risk)", 0.166, 0.320, 0.482, 0.820, -0.520, 0.52),
+    BookResult("SPY", 0.180, 0.140, 1.193, 1.118, -0.191, 0.73),
+    BookResult("IWM", 0.153, 0.201, 0.715, 0.858, -0.273, 0.58),
 )
 
-# The top-band book, over the full 6.5-year window (2020-08 .. 2026-08).
-TOP_BAND_FINAL_MULTIPLE = 5.77
-SPY_FINAL_MULTIPLE = 2.76
+# The top-band book, over the full 6.5-year window (2020-09 .. 2026-09).
+TOP_BAND_FINAL_MULTIPLE = 3.74
+SPY_FINAL_MULTIPLE = 2.79
 TOP_BAND_YEARS_BEAT_SPY = (4, 7)
 
 # Permutation test on the Sharpe statistic: the null re-runs the ENTIRE
