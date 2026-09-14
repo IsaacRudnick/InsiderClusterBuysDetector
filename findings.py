@@ -452,18 +452,26 @@ TOP_BAND_YEARS_BEAT_SPY = (4, 7)
 # Permutation test on the Sharpe statistic: the null re-runs the ENTIRE
 # 132-recipe search on shuffled scores. This is a different test, on a
 # different statistic, than TOP_BAND_PERMUTATION_P above (which tested raw
-# annualized excess RETURN and failed, p=0.435). This one, on Sharpe, passes.
-TOP_BAND_SHARPE_PERMUTATION_P = 0.005
-TOP_BAND_SHARPE_NULL_MEDIAN = 0.987
-TOP_BAND_SHARPE_NULL_P95 = 1.236
-
-# Why the two tests disagree even though they are run on the same book: a
-# fat right tail inflates the mean return AND the volatility of a
-# shuffled-score book together, so it can inflate a raw excess-return
-# statistic by chance -- but it cannot inflate a RATIO of the two the same
-# way, because the tail's contribution to the numerator is normalized by its
-# own contribution to the denominator. That is why Sharpe survives shuffling
-# where raw excess return did not.
+# annualized excess RETURN and also fails).
+#
+# THIS TEST USED TO PASS AND NO LONGER DOES. Until 2026-09-14 it read
+# p=0.005 -- the single positive result this project had, and the one
+# exception to "nothing here beats an index fund". Re-run on corrected data
+# it reads p=0.185. The search no longer even selects the shipped band: its
+# best recipe by Sharpe is now "50%-90% equal" at Sharpe 1.143, against a
+# shuffled-score null median of 1.004. A real edge does not sit that close
+# to its own null.
+#
+# The paragraph that used to live here explained WHY Sharpe survived
+# shuffling where raw excess return did not -- that a fat right tail
+# inflates mean return and volatility together, so it can inflate a
+# difference by chance but not a ratio. The reasoning was sound and the
+# premise was wrong: on corrected data Sharpe does not survive shuffling
+# either. It is deleted rather than kept, because a correct explanation of
+# something that is not happening is worse than no explanation.
+TOP_BAND_SHARPE_PERMUTATION_P = 0.185
+TOP_BAND_SHARPE_NULL_MEDIAN = 1.004
+TOP_BAND_SHARPE_NULL_P95 = 1.254
 
 # Harvestability caveats. Every one of these MUST travel with the headline
 # Sharpe/return numbers above wherever they are shown -- this result is a
@@ -527,14 +535,14 @@ def risk_adjusted_note() -> str:
         f"a {TOP_BAND_FINAL_MULTIPLE:.2f}x final multiple against SPY's "
         f"{SPY_FINAL_MULTIPLE:.2f}x, and it beat SPY in {yrs} of {yrs_tot} "
         "years. "
-        f"The Sharpe result passes a permutation test "
+        f"The Sharpe result fails a permutation test "
         f"(p={TOP_BAND_SHARPE_PERMUTATION_P:.3f}, null median "
         f"{TOP_BAND_SHARPE_NULL_MEDIAN:.3f}, 95th percentile "
-        f"{TOP_BAND_SHARPE_NULL_P95:.3f}). The raw return claim failed the "
-        f"same style of test (p={TOP_BAND_PERMUTATION_P:.3f}). The two "
-        "disagree because a fat right tail inflates mean return and "
-        "volatility together. That can inflate a return statistic by chance, "
-        "but not a ratio of the two."
+        f"{TOP_BAND_SHARPE_NULL_P95:.3f}) -- the observed Sharpe sits barely "
+        "above what shuffled scores produce by chance. The raw return claim "
+        f"fails the same style of test more heavily (p={TOP_BAND_PERMUTATION_P:.3f}). "
+        "Both tests now agree, and both say the same thing: this book is not "
+        "distinguishable from the same search run on noise."
     )
 
 

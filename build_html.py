@@ -53,18 +53,24 @@ at the bottom is the durable, worst band; top_band at 70-90 is the
 best-measured; above_band at 90-100 is explicitly worse than top_band, not
 better).
 
-TWO PERMUTATION TESTS, OPPOSITE ANSWERS, AND THE DIFFERENCE MATTERS. Do not
-collapse them when editing banner copy. The RETURN claim failed: a search for
-the best-performing percentile band reproduced its own +19.77%/yr on shuffled
-scores (findings.TOP_BAND_PERMUTATION_P = 0.435), so no excess-return claim is
-made anywhere. The RISK-ADJUSTED claim passed: the same style of search on
-Sharpe cleared its null at findings.TOP_BAND_SHARPE_PERMUTATION_P = 0.005,
-because a handful of enormous winners inflate the mean AND the volatility and
-so cannot inflate a ratio of the two. The banner therefore MAY state the top
-band's Sharpe and return, and must state them only alongside
+TWO PERMUTATION TESTS, BOTH NEGATIVE. This used to say "opposite answers",
+and until 2026-09-14 that was right: the RETURN claim failed while the
+RISK-ADJUSTED claim passed, and the banner was allowed to state the top
+band's Sharpe on the strength of that one surviving result. Re-measuring on
+corrected data (the double-count described in findings.py's header) removed
+it. The return claim now fails at findings.TOP_BAND_PERMUTATION_P = 1.000 --
+shuffled scores match or beat the real one every time -- and the Sharpe claim
+fails at findings.TOP_BAND_SHARPE_PERMUTATION_P = 0.185, against a null
+median of 1.004 versus an observed 1.143.
+
+So the banner MUST NOT present the top band's Sharpe or return as evidence
+that the ranking earns anything. State them, if at all, only as descriptive
+history of a survivors-only window, always alongside
 findings.harvestability_note() -- that book needs sub-$5, thinly traded names
-and costs under 50bps, and lands at or below an index fund under every
-realistic constraint. Numbers without that caveat are a misrepresentation.
+and costs under 20bps, and lands at or below an index fund under every
+realistic constraint. There is no longer any test in this project that a
+portfolio claim passes. Numbers presented as if there were are a
+misrepresentation.
 
 Every claim the banner and legend make comes from findings.py,
 which holds the numbers next to their provenance so that correcting the
