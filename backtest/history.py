@@ -354,6 +354,13 @@ def build_history(
     window_start = window_end - timedelta(days=int(months_back * 30.44))
     parsed, errors = scrape_filings(months_back)
     df = build_events_df(parsed)
+    # Release the parse before cleaning. A full 8-year scrape holds ~1.5M
+    # parsed filings here -- about 10GB -- while the frame below is only a
+    # few hundred thousand rows. Keeping the binding alive through the
+    # clean/copy steps below cost an OOM kill on a 16GB box at the
+    # notna().copy() in _basic_clean_events_df. Nothing reads it after
+    # build_events_df.
+    del parsed
     # Trim to the requested window (defensive; discover_filings can return a hair more)
     df = df[df["transaction_date"] >= window_start].copy()
     df = _basic_clean_events_df(df)
