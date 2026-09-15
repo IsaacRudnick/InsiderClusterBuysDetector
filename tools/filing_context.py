@@ -99,6 +99,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 import insider_cluster_buys as ics  # noqa: E402  (reuses its session/User-Agent only)
 
 log = logging.getLogger("filing_context")
@@ -106,7 +108,7 @@ log = logging.getLogger("filing_context")
 CACHE_DIR = os.path.join(REPO_ROOT, "filing_context_cache")
 SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK{cik}.json"
 FILES_URL = "https://data.sec.gov/submissions/{name}"
-DEFAULT_EVENTS = os.path.join(REPO_ROOT, "research_data", "research_10861rows_20260813.parquet")
+DEFAULT_EVENTS = data_paths.latest_research_dataset()
 DEFAULT_OUT = os.path.join(REPO_ROOT, "research_data", "filing_context.parquet")
 
 # ---------------------------------------------------------------------------

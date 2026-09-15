@@ -49,6 +49,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 import insider_cluster_buys as ics  # noqa: E402  (reuses its limiter, session, UA)
 
 log = logging.getLogger("filing_calendar")
@@ -315,7 +317,7 @@ def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     p.add_argument("--events", default="",
                     help="Research/events parquet to take issuer_cik from. "
-                         "Default: research_data/research_10861rows_20260813.parquet.")
+                         "Default: the newest research_data/research_<N>rows_<date>.parquet.")
     p.add_argument("--out", default="research_data/filing_calendar.parquet")
     p.add_argument("--refresh", action="store_true", help="Ignore the disk cache and refetch.")
     p.add_argument("--verbose", action="store_true")
@@ -325,7 +327,7 @@ def main(argv=None) -> int:
 
     events = a.events
     if not events:
-        default_events = os.path.join(REPO_ROOT, "research_data", "research_10861rows_20260813.parquet")
+        default_events = data_paths.latest_research_dataset()
         if os.path.exists(default_events):
             events = default_events
         else:

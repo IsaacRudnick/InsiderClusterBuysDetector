@@ -88,11 +88,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from backtest import ticker_reuse  # noqa: E402
 
-DEFAULT_EVENTS_PATH = os.path.join(
-    REPO_ROOT, "clusters_history", "events_20180813_20260813.parquet"
-)
+DEFAULT_EVENTS_PATH = data_paths.latest_events_file()
 PRICE_CACHE_DIR = os.path.join(REPO_ROOT, "price_cache")
 
 # ---------------------------------------------------------------------------

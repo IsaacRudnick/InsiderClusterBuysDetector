@@ -53,6 +53,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import run_score_lab as lab  # noqa: E402
 from tools import score_lab as sl  # noqa: E402
 from tools.ship_candidate import rank_average  # noqa: E402
@@ -148,8 +150,7 @@ def audit_score(df: pd.DataFrame, cand: sl.Candidate, seeds: int,
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--seeds", type=int, default=6)
     ap.add_argument("--out", default="")
     args = ap.parse_args(argv)

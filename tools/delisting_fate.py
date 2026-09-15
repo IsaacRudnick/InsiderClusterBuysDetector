@@ -62,6 +62,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 import insider_cluster_buys as icb  # noqa: E402  (for _load_dotenv / SEC_USER_AGENT)
 
 #: Deliberately NOT tools/filing_calendar.py's `filing_cache/`. That module
@@ -266,12 +268,7 @@ def dead_ticker_pairs(events: str | None = None) -> list[tuple[str, str]]:
     August -- including tickers that a later scrape prices fine.
     """
     if events is None:
-        d = os.path.join(REPO_ROOT, "clusters_history")
-        cands = sorted(f for f in os.listdir(d)
-                       if f.startswith("events_") and f.endswith(".parquet"))
-        if not cands:
-            raise SystemExit(f"no events_*.parquet in {d}")
-        events = os.path.join(d, cands[-1])
+        events = data_paths.latest_events_file(required=True)
     print(f"events file: {events}", flush=True)
     ev = pd.read_parquet(events)
     price_dir = os.path.join(REPO_ROOT, "price_cache")

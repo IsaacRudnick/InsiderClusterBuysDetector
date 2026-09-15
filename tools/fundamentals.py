@@ -120,13 +120,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 log = logging.getLogger("fundamentals")
 
 CACHE_DIR = os.path.join(REPO_ROOT, "xbrl_cache")
 PARSED_CACHE_DIR = os.path.join(CACHE_DIR, "parsed")
 BULK_URL = "https://www.sec.gov/files/dera/data/financial-statement-data-sets/{q}.zip"
 
-DEFAULT_EVENTS = os.path.join(REPO_ROOT, "research_data", "research_10861rows_20260813.parquet")
+DEFAULT_EVENTS = data_paths.latest_research_dataset()
 DEFAULT_FUNDAMENTALS_OUT = os.path.join(REPO_ROOT, "research_data", "fundamentals.parquet")
 
 

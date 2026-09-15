@@ -145,13 +145,15 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 import insider_cluster_buys as ics  # noqa: E402  (reuses PARSE_CACHE_DIR)
 
 log = logging.getLogger("form4_extras")
 
 PARSE_CACHE_DIR = ics.PARSE_CACHE_DIR  # "parse_cache" -- reuse the existing constant
 
-DEFAULT_EVENTS = os.path.join(REPO_ROOT, "research_data", "research_10861rows_20260813.parquet")
+DEFAULT_EVENTS = data_paths.latest_research_dataset()
 OUT_DIR = os.path.join(REPO_ROOT, "research_data")
 TX_CACHE_GLOB = "form4_extras_tx_*rows_*.parquet"
 OWNER_CACHE_GLOB = "form4_extras_owners_*rows_*.parquet"

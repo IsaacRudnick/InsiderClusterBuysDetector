@@ -41,9 +41,11 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 log = logging.getLogger("earnings_features")
 
-DEFAULT_EVENTS = os.path.join(REPO_ROOT, "research_data", "research_10861rows_20260813.parquet")
+DEFAULT_EVENTS = data_paths.latest_research_dataset()
 DEFAULT_CALENDAR = os.path.join(REPO_ROOT, "research_data", "filing_calendar.parquet")
 
 PERIODIC_FORMS = ("10-Q", "10-K")

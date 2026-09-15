@@ -88,6 +88,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import exit_lab as el  # noqa: E402
 from tools.final_search import (  # noqa: E402  -- reused, not modified
     HOLDOUT_START,
@@ -551,8 +553,7 @@ def _window_report(label: str, port: pd.DataFrame, states: pd.DataFrame) -> pd.D
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--scores", required=True)
     ap.add_argument("--score-col", default="ens")
     ap.add_argument("--refresh-fred", action="store_true",
