@@ -1778,3 +1778,94 @@ survivorship haircut of -4.5 to -12.4pp on the mean trade.
 was shipped for -- P(-30% in 21 days) of 7.9% in the bottom band against 1.2%
 in the top, stable in 7 of 7 years -- not portfolio construction. The band
 does not reliably improve a traded book out of sample. The exit rule does.
+
+## Every Form 4 was counted twice; re-measuring everything (2026-09-14)
+
+**This section supersedes the figures in every section above it.** Where an
+earlier section and `findings.py` disagree, `findings.py` is current.
+
+### The bug
+
+`insider_cluster_buys.discover_filings` deduplicated the SEC daily index by
+file path. The index lists one row per CIK on a filing (the issuer, and each
+reporting owner), each with its own `edgar/data/<cik>/<accession>.txt` path,
+so a two-party Form 4 was parsed twice. Across 8 years: 3,057,023 index rows,
+1,466,784 real filings. Every dollar amount in the events file, the research
+dataset and the live report was about 2x. Fixed by deduplicating on accession
+(`tests/test_discover_dedup.py`); one published cluster was checked against
+SEC's own `ownership.xml` to the cent. Dollar features dropped by 2.04-2.10x;
+the cluster count barely moved (10,861 -> 11,158, mostly one more month).
+
+### Method
+
+Dataset rebuilt from scratch, 10-seed ensemble and production bundle refit.
+Every regeneration script was first run on the OLD data and required to
+reproduce the published number exactly before being trusted on the new data.
+All did, except the holdout section (below).
+
+### What the correction did
+
+Rankings are nearly invariant to a uniform 2x (tree splits and quartiles are
+rank-based), so returns, win rates and IC barely moved. But top_band
+membership turned over 36% (Spearman 0.935 old vs new score), so everything
+that depends on WHICH names are in the band moved a lot:
+
+| | before | after |
+|---|---|---|
+| top band book, ann / Sharpe | 34.5% / 1.303 | 24.8% / 1.119 |
+| SPY Sharpe, same periods | 1.192 | 1.193 |
+| top band final multiple | 5.77x | 3.74x |
+| return permutation (70-90) | p=0.435 * | p=1.000 |
+| Sharpe permutation | **p=0.005** | p=0.185 |
+| holdout winner Sharpe | 0.400 | -0.176 (0.90x) |
+| band helps out of sample | 1 of 5 slots | 0 of 5 |
+| cost breakeven vs SPY Sharpe | < 50bps | < 20bps |
+| dollar-weighted unpriceable | 27.1% | 32.2% |
+| elevated-risk crash rate range | 7.3-9.2% | 6.6-9.9% |
+
+\* +19.77%/yr at p=0.435 was never the shipped band's result:
+`tools/band_robustness.py` tested 80-90 and its output was transcribed under a
+70-90 label. The shipped band measured +14.07%/yr at p=0.745 even before the
+correction.
+
+The Sharpe permutation test was the project's one passing portfolio result.
+It no longer passes. **No test in this project now supports a portfolio
+claim.**
+
+What survived: monthly IC 0.0874, positive 7 of 7 years; the elevated-risk
+band's ~3x crash-rate separation in every year; and the trailing stop beating
+the fixed hold in 25 of 25 cells, now by +0.98 Sharpe and +17.1pp/yr. The
+skip list stands. The exit rule stands. Nothing else does.
+
+### The holdout could not be cross-checked
+
+It is the only section that re-reads daily bars from `price_cache/` rather
+than returns frozen into the parquet, and the rebuild refetched and
+split-adjusted 4,944 of 5,259 cached tickers. The August price paths are
+gone, so its old values cannot be reproduced. New values are measured on
+today's cache. The grid (7,560 configs) and holdout SPY did reproduce.
+
+The double-count also changed the holdout SEARCH, not just the measurement:
+its universe filters are in dollars, so "$0.25M" was half as strict as it
+claimed. The old winner used 1,987 events on a loose universe; corrected,
+107.
+
+### Silent tool bugs found along the way
+
+Each was right when written and wrong once data moved; none raised an error.
+
+- `tools/exit_lab.py`: `PRICE_DIR` is repo-root-anchored and unpriceable
+  events are skipped silently. In a checkout with a sparse `price_cache/` the
+  holdout search reported Sharpe 3.8 with a -5.8% drawdown. Run it only
+  against a full cache.
+- `tools/final_search.py`: SPY window pinned to 2026-08-12, crediting the book
+  with months SPY did not get. Now derived from the data.
+- `tools/tradeable_universe.py`: refit on `--dataset`, graded against a
+  pinned old parquet. Fixed.
+- `tools/delisting_fate.py`, `tools/survivorship_bound.py`,
+  `tools/survivorship_remeasure.py`: pinned events file / dataset / a literal
+  `10861`. Now use the newest file.
+- `tools/band_robustness.py`: tested 80-90 while 70-90 ships. Now defaults to
+  the shipped band.
+- `backtest/history.py`: a full rebuild OOM-killed on 16GB holding a 10GB
+  parse list nothing read. Freed after use.
