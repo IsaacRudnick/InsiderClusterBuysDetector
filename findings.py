@@ -9,6 +9,7 @@ source. Correct the research here and the product corrects with it.
 
 Every number below is measured, not assumed, and carries its source. If you
 change a number, change its provenance line in the same edit.
+tools/findings_regen/ holds the scripts that re-derive them.
 
 THE HEADLINE, STATED ONCE. This pipeline is a skip list, not a pick list.
 It tells you which insider cluster buys are worth manual research and which
