@@ -205,10 +205,20 @@ SESSION.headers.update({
 def _get(url: str, params: dict | None = None, accept_html: bool = False) -> requests.Response:
     headers = {"Accept": "text/html,application/xhtml+xml,application/xml,text/xml,*/*"} \
         if accept_html else {"Accept": "application/json"}
-    last_exc: Optional[requests.HTTPError] = None
+    last_exc: Optional[Exception] = None
     for attempt in range(5):
         _LIMITER.acquire()
-        resp = SESSION.get(url, params=params, headers=headers, timeout=30)
+        try:
+            resp = SESSION.get(url, params=params, headers=headers, timeout=30)
+        except (requests.Timeout, requests.ConnectionError) as exc:
+            # As transient as a 503, but it used to escape on the first try:
+            # only 5xx responses were retried. See discover_filings.
+            last_exc = exc
+            backoff = 2 ** attempt
+            log.warning("SEC %s on %s - retrying in %ds (attempt %d/5)",
+                        type(exc).__name__, url, backoff, attempt + 1)
+            time.sleep(backoff)
+            continue
         if resp.status_code < 500:
             resp.raise_for_status()
             return resp
@@ -308,15 +318,41 @@ def discover_filings(lookback_days: int) -> list[dict]:
     """Walk daily indexes for the last `lookback_days` and collect Form 4 filings."""
     today = date.today()
     all_rows: list[dict] = []
+    failed: list[str] = []
+    weekdays = empty_days = 0
     for offset in range(lookback_days + 1):
         day = today - timedelta(days=offset)
         if day.weekday() >= 5:
             continue
         log.info("Daily index %s", day.isoformat())
+        weekdays += 1
         try:
-            all_rows.extend(fetch_daily_index(day))
+            day_rows = fetch_daily_index(day)
+            all_rows.extend(day_rows)
+            empty_days += not day_rows
         except Exception as exc:
             log.error("Failed to fetch daily index for %s: %s", day, exc)
+            failed.append(day.isoformat())
+    if failed:
+        # A missing index is a missing day of filings. Logging and carrying on
+        # published run_status: ok for a report silently short that day, and
+        # dropped 7 days from the 8-year research rebuild without failing it.
+        # _get has already retried; a weekday that still cannot be fetched
+        # stops the run so the failure is seen.
+        raise RuntimeError(
+            f"Could not fetch the SEC daily index for {len(failed)} weekday(s) "
+            f"after retries: {', '.join(failed)}. Re-run; parsed filings are "
+            "cached, so a retry only repeats the index walk."
+        )
+    if weekdays >= 3 and empty_days == weekdays:
+        # fetch_daily_index reads a 403 as "no index, a holiday", but SEC also
+        # answers a blocked or unidentified client with 403 -- so a block
+        # looks like every day being a holiday and would publish an empty
+        # report as ok. No run of three weekdays is ever all holidays.
+        raise RuntimeError(
+            f"All {weekdays} weekday SEC daily indexes in the lookback came back "
+            "empty, which is a block, not holidays. Check SEC_USER_AGENT."
+        )
     # Deduplicate by ACCESSION, not by file_name. The daily index lists one
     # row per CIK involved in a filing -- once under the issuer and once under
     # each reporting owner -- and each row carries a different
