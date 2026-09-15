@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import sys
 from datetime import date
 
@@ -154,6 +155,22 @@ def dead_cluster_events(fate: pd.DataFrame, recovered: dict) -> pd.DataFrame:
     return out
 
 
+
+def _newest_research_parquet() -> str:
+    """Newest research_*rows_*.parquet in research_data/.
+
+    Pinning a filename here meant the survivors-only population was read
+    from whatever dataset happened to be current when the line was written,
+    silently ignoring any later rebuild.
+    """
+    d = os.path.join(REPO_ROOT, "research_data")
+    cands = sorted(f for f in os.listdir(d)
+                   if re.match(r"research_\d+rows_\d+\.parquet$", f))
+    if not cands:
+        raise SystemExit(f"no research_*rows_*.parquet in {d}")
+    return os.path.join(d, cands[-1])
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--limit-fetch", type=int, default=0,
@@ -173,8 +190,9 @@ def main(argv=None) -> int:
     ev = dead_cluster_events(fate, recovered)
     ev = ev.merge(fate[["event_ticker", "classification"]],
                   left_on="ticker", right_on="event_ticker", how="left")
+    _n_surv = len(pd.read_parquet(_newest_research_parquet()))
     print(f"\n{len(ev)} cluster events sit on dead tickers "
-          f"(vs {10861} in the survivors-only research dataset)")
+          f"(vs {_n_surv} in the survivors-only research dataset)")
     print(f"  of those, {int(ev['mapped_ticker'].notna().sum())} are on "
           f"companies whose real prices we just recovered")
     print("\nevents by fate:")
