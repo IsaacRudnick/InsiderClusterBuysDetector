@@ -68,8 +68,7 @@ def main(argv=None) -> int:
     fate = sb.load_fate()
     dead = pd.read_parquet(os.path.join(
         REPO_ROOT, "research_data", "dead_cluster_events.parquet"))
-    surv = pd.read_parquet(os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    surv = pd.read_parquet(sb._newest_research_parquet())
     surv["entry_day"] = pd.to_datetime(surv["entry_day"])
     surv["score"] = 0.0
 
