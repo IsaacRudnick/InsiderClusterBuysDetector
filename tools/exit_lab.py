@@ -185,12 +185,41 @@ class PathSet:
     meta: pd.DataFrame     # one row per trade, aligned to the matrices
 
 
-def build_paths(events: pd.DataFrame, max_days: int) -> PathSet:
-    """Extract `max_days` of forward bars for every priceable event."""
+def report_price_coverage(n_events: int, n_unpriced: int,
+                          min_coverage: float | None = None) -> None:
+    """Say how many events had no price file, and fail below `min_coverage`.
+
+    Skipping an event with no price file used to be silent. PRICE_DIR is
+    anchored to the repo root, so in a checkout whose price_cache/ holds only
+    a few names every other event vanished without a word -- and the
+    survivors are the currently-listed names, which is how a holdout search
+    once reported Sharpe 3.8 with a -5.8% drawdown instead of failing.
+    """
+    if not n_events or not n_unpriced:
+        return
+    msg = (f"exit_lab: {n_unpriced} of {n_events} events "
+           f"({n_unpriced / n_events:.1%}) have no price file in {PRICE_DIR} "
+           "and were skipped")
+    if min_coverage is not None and 1 - n_unpriced / n_events < min_coverage:
+        raise RuntimeError(
+            f"{msg}. That is below the required {min_coverage:.0%} coverage; "
+            "point it at a full price_cache/ rather than trusting the result.")
+    print(f"WARNING: {msg}", file=sys.stderr, flush=True)
+
+
+def build_paths(events: pd.DataFrame, max_days: int, *,
+                min_coverage: float | None = None) -> PathSet:
+    """Extract `max_days` of forward bars for every priceable event.
+
+    Events with no price file are skipped and counted; see
+    report_price_coverage. Pass `min_coverage` when every event is expected
+    to be priceable (the research dataset only holds priced events)."""
     entries, opens, lows, closes, valids, keep = [], [], [], [], [], []
+    n_unpriced = 0
     for t in events.itertuples(index=False):
         px = load_prices(t.ticker)
         if px is None:
+            n_unpriced += 1
             continue
         i = px.index.searchsorted(pd.Timestamp(t.entry_day))
         if i >= len(px):
@@ -217,6 +246,7 @@ def build_paths(events: pd.DataFrame, max_days: int) -> PathSet:
         closes.append(c)
         valids.append(np.isfinite(o) & np.isfinite(lo) & np.isfinite(c))
         keep.append(t)
+    report_price_coverage(len(events), n_unpriced, min_coverage)
     if not entries:
         return PathSet(np.array([]), np.zeros((0, max_days)),
                        np.zeros((0, max_days)), np.zeros((0, max_days)),
@@ -316,9 +346,11 @@ def simulate_events(
     """
     cost = cost_bps / 10_000.0
     rows = []
+    n_unpriced = 0
     for t in events.itertuples(index=False):
         px = load_prices(t.ticker)
         if px is None:
+            n_unpriced += 1
             continue
         res = simulate_trade(px, pd.Timestamp(t.entry_day), rule)
         if res is None:
@@ -335,6 +367,7 @@ def simulate_events(
                 exit_reason=res.exit_reason,
             )
         )
+    report_price_coverage(len(events), n_unpriced)
     return pd.DataFrame(rows)
 
 

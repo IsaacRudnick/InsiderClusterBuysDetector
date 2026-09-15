@@ -208,3 +208,35 @@ def test_empty_slots_earn_zero():
     one = el.daily_marked_portfolio(paths, trades, n_slots=1, cost_bps=0.0)
     ten = el.daily_marked_portfolio(paths, trades, n_slots=10, cost_bps=0.0)
     assert one["ret"].sum() == pytest.approx(10 * ten["ret"].sum(), rel=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Unpriceable events are counted, not silently dropped
+# ---------------------------------------------------------------------------
+
+def _with_unpriced(n_priced: int, n_unpriced: int) -> pd.DataFrame:
+    ev = as_events({f"P{i}": px_frame(closes=[101.0] * 5) for i in range(n_priced)})
+    gone = []
+    for i in range(n_unpriced):
+        el._PX_CACHE[f"GONE{i}"] = None     # what load_prices caches for no file
+        gone.append(dict(ticker=f"GONE{i}", entry_day=ev["entry_day"].iloc[0],
+                         entry_idx=0, score=0.0))
+    return pd.concat([ev, pd.DataFrame(gone)], ignore_index=True)
+
+
+def test_unpriced_events_are_reported(capsys):
+    paths = el.build_paths(_with_unpriced(9, 1), 5)
+    assert len(paths.meta) == 9
+    assert "1 of 10 events" in capsys.readouterr().err
+
+
+def test_full_coverage_is_silent(capsys):
+    el.build_paths(_with_unpriced(5, 0), 5)
+    assert capsys.readouterr().err == ""
+
+
+def test_min_coverage_fails_a_sparse_cache():
+    """The failure mode behind a fabricated Sharpe of 3.8: most events had no
+    price file and the search ran on the few that did."""
+    with pytest.raises(RuntimeError, match="below the required 98% coverage"):
+        el.build_paths(_with_unpriced(2, 8), 5, min_coverage=0.98)
