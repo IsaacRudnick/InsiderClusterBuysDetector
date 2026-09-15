@@ -1801,7 +1801,8 @@ the cluster count barely moved (10,861 -> 11,158, mostly one more month).
 Dataset rebuilt from scratch, 10-seed ensemble and production bundle refit.
 Every regeneration script was first run on the OLD data and required to
 reproduce the published number exactly before being trusted on the new data.
-All did, except the holdout section (below).
+All did, except the holdout section (below). The scripts are committed in
+`tools/findings_regen/`.
 
 ### What the correction did
 
@@ -1855,17 +1856,26 @@ claimed. The old winner used 1,987 events on a loose universe; corrected,
 Each was right when written and wrong once data moved; none raised an error.
 
 - `tools/exit_lab.py`: `PRICE_DIR` is repo-root-anchored and unpriceable
-  events are skipped silently. In a checkout with a sparse `price_cache/` the
-  holdout search reported Sharpe 3.8 with a -5.8% drawdown. Run it only
-  against a full cache.
+  events were skipped silently. In a checkout with a sparse `price_cache/` the
+  holdout search reported Sharpe 3.8 with a -5.8% drawdown. Every skipped event
+  is now reported, and `final_search` fails below 98% price coverage.
 - `tools/final_search.py`: SPY window pinned to 2026-08-12, crediting the book
   with months SPY did not get. Now derived from the data.
 - `tools/tradeable_universe.py`: refit on `--dataset`, graded against a
   pinned old parquet. Fixed.
 - `tools/delisting_fate.py`, `tools/survivorship_bound.py`,
   `tools/survivorship_remeasure.py`: pinned events file / dataset / a literal
-  `10861`. Now use the newest file.
+  `10861`. Now use the newest file. 27 tools in all defaulted to the
+  double-counted dataset or events file; they now resolve the newest one by
+  the date in its name through `tools/data_paths.py`.
 - `tools/band_robustness.py`: tested 80-90 while 70-90 ships. Now defaults to
   the shipped band.
+- `insider_cluster_buys.discover_filings`: a timed-out daily index was logged
+  and skipped -- `_get` only retried 5xx -- so 7 days fell out of the 8-year
+  rebuild and a weekly report could publish as `ok` short a day. Timeouts are
+  now retried, and a weekday that still cannot be fetched fails the run. A
+  lookback whose weekdays all come back empty fails too: SEC answers a blocked
+  client with 403, which `fetch_daily_index` reads as a holiday.
 - `backtest/history.py`: a full rebuild OOM-killed on 16GB holding a 10GB
-  parse list nothing read. Freed after use.
+  parse list nothing read. Freed after use. The parse itself still peaks near
+  10GB, so a full rebuild needs swap on a 16GB machine.
