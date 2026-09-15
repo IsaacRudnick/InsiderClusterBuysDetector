@@ -25,6 +25,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import sharpe_lab as sh  # noqa: E402
 
 #: The recipe grid. Bands are the ones the decile evidence points at plus the
@@ -72,8 +74,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--scores", required=True)
     ap.add_argument("--score-col", default="ens")
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--draws", type=int, default=150)
     ap.add_argument("--top", type=int, default=18)
     args = ap.parse_args(argv)

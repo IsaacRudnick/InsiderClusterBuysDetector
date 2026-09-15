@@ -92,6 +92,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 import insider_cluster_buys as ics  # noqa: E402  (reuses only its configured contact User-Agent)
 
 log = logging.getLogger("short_interest")
@@ -99,7 +101,7 @@ log = logging.getLogger("short_interest")
 CACHE_DIR = os.path.join(REPO_ROOT, "short_interest_cache")
 FINRA_URL = "https://api.finra.org/data/group/otcMarket/name/consolidatedShortInterest"
 
-DEFAULT_EVENTS = os.path.join(REPO_ROOT, "research_data", "research_10861rows_20260813.parquet")
+DEFAULT_EVENTS = data_paths.latest_research_dataset()
 DEFAULT_SHORT_INTEREST_PARQUET = os.path.join(REPO_ROOT, "research_data", "short_interest.parquet")
 
 # FINRA's fair-access ask is <= 10 req/s; the task spec for this module asks

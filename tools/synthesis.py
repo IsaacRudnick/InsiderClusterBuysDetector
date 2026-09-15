@@ -51,6 +51,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import event_definition_sweep as eds  # noqa: E402
 from tools import exit_lab as el  # noqa: E402
 
@@ -184,8 +186,7 @@ def definition_null(
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--events", default=os.path.join(
-        REPO_ROOT, "clusters_history", "events_20180813_20260813.parquet"))
+    ap.add_argument("--events", default=data_paths.latest_events_file())
     ap.add_argument("--slots", type=int, default=15)
     ap.add_argument("--cost-bps", type=float, default=50.0)
     ap.add_argument("--draws", type=int, default=60)

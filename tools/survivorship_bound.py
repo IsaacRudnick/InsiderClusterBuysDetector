@@ -42,7 +42,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import sys
 from datetime import date
 
@@ -52,6 +51,8 @@ import pandas as pd
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
+
+from tools import data_paths  # noqa: E402
 
 from tools import exit_lab as el  # noqa: E402
 
@@ -126,14 +127,8 @@ def dead_cluster_events(fate: pd.DataFrame, recovered: dict) -> pd.DataFrame:
     """
     from tools import event_definition_sweep as eds
 
-    # Newest events file, not a pinned one -- see delisting_fate's
-    # dead_ticker_pairs for the same fix and the reason.
-    _ev_dir = os.path.join(REPO_ROOT, "clusters_history")
-    _ev_files = sorted(f for f in os.listdir(_ev_dir)
-                       if f.startswith("events_") and f.endswith(".parquet"))
-    if not _ev_files:
-        raise SystemExit(f"no events_*.parquet in {_ev_dir}")
-    ev_path = os.path.join(_ev_dir, _ev_files[-1])
+    # Newest events file by date, not a pinned name -- see tools/data_paths.py.
+    ev_path = data_paths.latest_events_file(required=True)
     print(f"events file: {ev_path}", flush=True)
     df = eds.load_qualifying_rows(ev_path)
     dead = set(fate["event_ticker"])
@@ -163,12 +158,7 @@ def _newest_research_parquet() -> str:
     from whatever dataset happened to be current when the line was written,
     silently ignoring any later rebuild.
     """
-    d = os.path.join(REPO_ROOT, "research_data")
-    cands = sorted(f for f in os.listdir(d)
-                   if re.match(r"research_\d+rows_\d+\.parquet$", f))
-    if not cands:
-        raise SystemExit(f"no research_*rows_*.parquet in {d}")
-    return os.path.join(d, cands[-1])
+    return data_paths.latest_research_dataset(required=True)
 
 
 def main(argv=None) -> int:

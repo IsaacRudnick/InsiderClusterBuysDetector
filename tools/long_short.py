@@ -48,6 +48,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from scipy import stats  # noqa: E402
 
 from tools import run_score_lab as lab  # noqa: E402
@@ -135,8 +137,7 @@ def summarise(per: pd.DataFrame, label: str) -> dict:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--seeds", type=int, default=8)
     ap.add_argument("--cost-bps", type=float, default=50.0)
     ap.add_argument("--borrow-bps", type=float, default=400.0)

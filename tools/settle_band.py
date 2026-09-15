@@ -45,6 +45,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import final_search as fs  # noqa: E402
 
 #: Index into fs.RULES. 0 is the fixed 21-day hold every earlier result used;
@@ -125,8 +127,7 @@ def report(t: pd.DataFrame, spy: dict) -> None:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--scores", required=True)
     ap.add_argument("--score-col", default="ens")
     ap.add_argument("--out", default="")

@@ -37,6 +37,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import sharpe_lab as sh  # noqa: E402
 
 PPY = sh.PERIODS_PER_YEAR
@@ -184,8 +186,7 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--scores", required=True)
     ap.add_argument("--score-col", required=True)
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--lo", type=float, default=0.70)
     ap.add_argument("--hi", type=float, default=0.90)
     ap.add_argument("--weighting", default="equal")
