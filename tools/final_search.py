@@ -53,6 +53,8 @@ REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
+from tools import data_paths  # noqa: E402
+
 from tools import exit_lab as el  # noqa: E402
 
 SELECTION_END = pd.Timestamp("2022-12-31")
@@ -142,7 +144,9 @@ def precompute(df: pd.DataFrame) -> dict:
     and then filtering is what makes the search affordable, and it is exactly
     equivalent to simulating each configuration separately.
     """
-    paths = el.build_paths(df, max(r.max_hold for r in RULES))
+    # The research dataset only holds events that had an entry price, so near
+    # full coverage is expected; anything less means a sparse price_cache/.
+    paths = el.build_paths(df, max(r.max_hold for r in RULES), min_coverage=0.98)
     out = {}
     for i, rule in enumerate(RULES):
         tr = el.simulate_paths(paths, rule, cost_bps=0.0)
@@ -272,8 +276,7 @@ def spy_returns(index: pd.DatetimeIndex, lo, hi) -> np.ndarray:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--dataset", default=os.path.join(
-        REPO_ROOT, "research_data", "research_10861rows_20260813.parquet"))
+    ap.add_argument("--dataset", default=data_paths.latest_research_dataset())
     ap.add_argument("--scores", required=True)
     ap.add_argument("--score-col", default="ens")
     ap.add_argument("--top", type=int, default=20)
