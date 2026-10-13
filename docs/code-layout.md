@@ -1,7 +1,7 @@
 # Code layout
 
-Where everything lives, and the data caches it builds. For what the project
-is, see the [README](../README.md).
+This page shows the location of each module and each data cache. For an
+overview of the project, refer to the [README](../README.md).
 
 ```
 insider_cluster_buys.py     entry point, the live EDGAR screener
@@ -61,23 +61,25 @@ docs/                       the technical reference this page belongs to
 RESEARCH_NOTES.md           the lab notebook, in the order things happened
 ```
 
-Everything in `tools/` is dual-purpose: importable as a library and runnable as
-`python tools/name.py`. Python puts a script's *own* directory on
-`sys.path[0]`, not the repo root, so each carries a guarded `REPO_ROOT`
-bootstrap to find its siblings.
+You can import each module in `tools/` as a library. You can also run it as
+`python tools/name.py`. Python puts the directory of the script in
+`sys.path[0]`, not the root of the repository. Thus, each tool contains a
+`REPO_ROOT` bootstrap that finds the other modules.
 
 ## Caches
 
-All gitignored, all reproducible, none cheap.
+Git ignores all of these caches. You can make each cache again, but this
+takes time.
 
-| Directory | Contents | Cost to rebuild |
+| Directory | Contents | Time to make again |
 |---|---|---|
-| `parse_cache/` | One JSON per SEC accession, over a million files | About a day per year of history |
-| `price_cache/` | Per-ticker parquets, hundreds of MB | Refetched from Yahoo on demand |
-| `clusters_history/` | Scraped event parquets, ~100 MB | The scrape above |
-| `research_data/` | Datasets, OOF scores, fitted model bundles | Minutes, given the above |
-| `ipo_cache/`, `issuer_meta_cache/` | Per-ticker / per-CIK JSON | Cheap |
-| `filing_cache/`, `delist_cache/`, `short_interest_cache/`, `xbrl_cache/`, `filing_context_cache/`, `fred_cache/` | Inputs for the research tools in `tools/` | Re-run the tool that built them |
-| `out/` | Reports and dashboards | Cheap |
+| `parse_cache/` | One JSON file for each SEC accession, more than one million files | Approximately one day for each year of history |
+| `price_cache/` | One parquet file for each ticker, hundreds of MB | The project downloads prices from Yahoo again when necessary |
+| `clusters_history/` | Event parquet files from the EDGAR download, approximately 100 MB | The same as `parse_cache/` |
+| `research_data/` | Datasets, out-of-fold scores and model bundles | Minutes, if the caches above are available |
+| `ipo_cache/`, `issuer_meta_cache/` | One JSON file for each ticker or CIK | Short |
+| `filing_cache/`, `delist_cache/`, `short_interest_cache/`, `xbrl_cache/`, `filing_context_cache/`, `fred_cache/` | Inputs for the research tools in `tools/` | Run the tool that made the cache |
+| `out/` | Reports and dashboards | Short |
 
-Back up `parse_cache/` and `clusters_history/`. They are the expensive ones.
+Make a backup of `parse_cache/` and `clusters_history/`. These two caches take
+the most time to make again.

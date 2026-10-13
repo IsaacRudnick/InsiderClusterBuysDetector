@@ -1,130 +1,158 @@
-# The live screener
+# The screener
 
-Technical reference for `insider_cluster_buys.py`. For what the project is and
-how to get started, see the [README](../README.md).
+This page is the technical reference for `insider_cluster_buys.py`. For an
+overview of the project, refer to the [README](../README.md).
 
-## Running it
+## Start the screener
 
 ```
-run.bat                              # Windows: creates .venv, installs, runs
-python insider_cluster_buys.py       # anywhere, inside your own virtualenv
+run.bat                              # Windows: makes .venv, installs the packages, starts the screener
+python insider_cluster_buys.py       # All systems: use your own virtual environment
 ```
 
-It prompts for lookback days (30), minimum distinct insiders (2), and cluster
-window days (14). Set `ICB_LOOKBACK`, `ICB_MIN_INSIDERS` and `ICB_WINDOW_DAYS`
-to skip the prompts. That is necessary for a scheduled or piped run, where a
-bare `input()` with no stdin would block forever.
+The screener asks for three values:
 
-`SEC_USER_AGENT` is required, in `.env` (see `.env.example`). SEC's fair-access
-rules require a descriptive User-Agent with a real contact email; without one
-SEC throttles or blocks you. The scraper limits itself to 8 requests/second
-against SEC's published ceiling of 10.
-
-Other variables, all optional and documented in `.env.example`:
-
-| Variable | Meaning |
+| Value | Default |
 |---|---|
-| `LIVE_SCORE_FETCH_PRICES` | `0` skips the price fetch for scored tickers. Faster; fewer model inputs resolve. |
-| `LIVE_SCORE_MODEL_PATH` | Pin a model bundle instead of using the newest in `research_data/`. |
-| `LIVE_SCORE_HISTORY_PATH` | Pin the research dataset used for score percentiles. |
+| The number of days to examine (lookback) | 30 |
+| The minimum number of different insiders in a cluster | 2 |
+| The cluster window, in days | 14 |
 
-## Outputs
+To skip these questions, set `ICB_LOOKBACK`, `ICB_MIN_INSIDERS` and
+`ICB_WINDOW_DAYS`. A scheduled run must set these variables. Without them,
+`input()` waits for input that does not come, and the run does not stop.
 
-Written to `out/`, overwritten each run:
+Set `SEC_USER_AGENT` in `.env`. Refer to `.env.example`. The SEC fair-access
+rules tell each program to send a User-Agent with a name and a real email
+address. Without it, the SEC can slow or block your requests. The screener
+sends a maximum of 8 requests each second. The SEC limit is 10.
 
-- `dashboard.html`: self-contained, shareable as a single attachment. The full
-  payload is embedded as a `<script type="application/json">` block, so the
-  file is both human- and machine-readable.
-- `insider_cluster_buys.xlsx`: Flagged Clusters, All Tx and Errors sheets.
+These variables are optional. `.env.example` also describes them.
 
-To re-render the dashboard after editing CSS or legend copy, without paying for
-a fresh EDGAR scan:
+| Variable | Function |
+|---|---|
+| `LIVE_SCORE_FETCH_PRICES` | Set to `0` to skip the price download for scored tickers. The run is faster, but fewer inputs are available to the model. |
+| `LIVE_SCORE_MODEL_PATH` | Use this model bundle, not the newest bundle in `research_data/`. |
+| `LIVE_SCORE_HISTORY_PATH` | Use this research dataset for the score percentiles, not the newest dataset. |
+
+## Output files
+
+The screener writes these files in `out/`. Each run replaces them.
+
+- `dashboard.html`: One self-contained file. You can send it as one
+  attachment. It contains all of the data in a
+  `<script type="application/json">` block. Thus, people and programs can
+  both read it.
+- `insider_cluster_buys.xlsx`: A workbook with three sheets. The sheets are
+  Flagged Clusters, All Tx and Errors.
+
+After you change the CSS or the legend text, you can make the dashboard again
+without a new EDGAR scan. Type this command:
 
 ```
 python build_html.py
 ```
 
-It reads the payload back out of `out/dashboard.html` and overwrites the file.
+This command reads the data from `out/dashboard.html`. Then it writes the file
+again.
 
 ## The model
 
-Clusters are sorted and badged by a trained model, `research/screen_model.py`:
-a 10-seed ensemble of quantile-regression rankers (alpha 0.35, so the fit
-leans on the loss side), at a 21-trading-day horizon, against a target made
-relative to other events in the same calendar month and volatility quintile,
-using only features the screener can compute at run time. Its docstring
-explains each of those choices.
+The screener uses the model in `research/screen_model.py` to sort and label
+the clusters. The model has these properties:
 
-Build it with:
+- It is an ensemble of 10 quantile-regression rankers. Each ranker has a
+  different random seed.
+- The quantile is 0.35. Thus, the model gives more weight to losses.
+- The horizon is 21 trading days.
+- The target is the return relative to other events in the same calendar
+  month and the same volatility quintile.
+- The model uses only the features that the screener can calculate during a
+  live run.
+
+The docstring of `research/screen_model.py` gives the reason for each
+property.
+
+To make the model, type these commands:
 
 ```
-python run_research.py --all          # scrape 96 months of EDGAR, build the dataset
+python run_research.py --all          # downloads 96 months of EDGAR data and makes the dataset
 python run_research.py --fit-screen   # writes research_data/screen_model_<nrows>rows_<YYYYMMDD>.joblib
 ```
 
-The screener uses the newest `screen_model_*.joblib`. If none is present it
-falls back, with a warning, to the retired single-classifier
-`production_model_*.joblib`. With neither on disk every row renders as
-`not_scored`, rather than falling back to the hand-tuned `conviction_score`,
-which measured at zero risk-adjusted edge.
+The screener uses the newest `screen_model_*.joblib`. If this file is not
+available, the screener uses the retired `production_model_*.joblib` and
+shows a warning. If neither file is available, the screener shows each row as
+`not_scored`. It does not use `conviction_score`, because that score has no
+risk-adjusted edge.
 
-That fallback does not fail the run: the screener exits 0 with nothing scored.
-Check `model_info.model_available` in the embedded payload before trusting an
-unattended run.
+> **CAUTION:** If the model is not available, the run does not fail. The
+> screener exits with code 0 and does not score a cluster. Before you use the
+> result of an unattended run, examine `model_info.model_available` in the
+> embedded data.
 
 ## The verdicts
 
-A cluster's percentile is measured against the model's own training-score
-distribution. Measured out of sample on 9,371 cluster episodes, 2020-2026,
-against log excess return over SPY at 21 trading days (`findings.BANDS`,
-2026-09-14):
+The percentile of a cluster compares its score with the scores that the model
+gave to the historical data. The research measured each band out of sample, on 9,371
+cluster episodes from 2020 to 2026. The return is the log excess return over
+SPY at 21 trading days. The values come from `findings.BANDS`, measured on
+2026-09-14.
 
-| Verdict | Percentile | Median excess | Win rate | P(loses >30% in 21 days) | Use |
+| Verdict | Percentile | Median excess | Win rate | P(loss > 30% in 21 days) | Use |
 |---|---|---|---|---|---|
-| `top_band` | 70-90 | -0.03% | 49.7% | 1.33% | Research first. Roughly flat against SPY: a reading queue, not an expected winner. |
-| `above_band` | 90-100 | -0.30% | 49.0% | 2.77% | Scored higher and measured worse than `top_band`, in 5 of 7 out-of-sample years. Research second. |
+| `top_band` | 70-90 | -0.03% | 49.7% | 1.33% | Examine first. The median is approximately equal to SPY. Use this band as a list to read, not as a list to buy. |
+| `above_band` | 90-100 | -0.30% | 49.0% | 2.77% | Examine second. The score is higher, but the results were worse than `top_band` in 5 of 7 out-of-sample years. |
 | `middle` | 30-70 | -0.70% | 46.7% | 2.43% | Low priority. |
-| `elevated_risk` | 0-30 | -2.68% | 42.9% | 7.93% | Skip, or research knowing the risk. The crash rate stayed between 6.6% and 9.9% in every out-of-sample year. |
-| `unavailable` | - | | | | Too many of the model's inputs could not be computed. |
-| `not_scored` | - | | | | No model bundle on disk this run. |
+| `elevated_risk` | 0-30 | -2.68% | 42.9% | 7.93% | Ignore, or examine carefully. In each out-of-sample year, the crash rate was between 6.6% and 9.9%. |
+| `unavailable` | - | | | | The model could not calculate too many of its inputs. |
+| `not_scored` | - | | | | No model bundle was available for this run. |
 
-The bands are non-monotonic on purpose: past the 90th percentile, measured risk
-rises again. Sorting descending and taking the top rows lands on the wrong
-names. See [findings.md](findings.md).
+The risk does not decrease in the same order as the bands. Above the 90th
+percentile, the measured risk increases again. Thus, do not sort the list by
+score and take the top rows. Refer to [findings.md](findings.md).
 
-Every evidence claim the dashboard makes comes from `findings.py`, which keeps
-each number next to its provenance so that correcting the research corrects the
-product. Do not hard-code an evidence claim into a rendering function. The
-table above is a snapshot of `findings.py`; when they disagree, `findings.py` is
-right.
+Each claim on the dashboard comes from `findings.py`. This file keeps each
+number next to its source. When the research corrects a number in
+`findings.py`, the dashboard also changes. Do not write a claim directly into
+a function that makes HTML.
 
-## Running it unattended
+> **NOTE:** The table on this page is a copy of the values in `findings.py`.
+> If the two are different, `findings.py` is correct.
 
-For a scheduled run (cron, a systemd timer, Task Scheduler):
+## Unattended runs
+
+For a scheduled run, use this command. The scheduler can be cron, a systemd
+timer or Windows Task Scheduler.
 
 ```
 ICB_LOOKBACK=30 ICB_MIN_INSIDERS=2 ICB_WINDOW_DAYS=14 \
     python insider_cluster_buys.py </dev/null
 ```
 
-- **Give it no stdin.** If a prompt is ever added without an env override, the
-  run then fails at once instead of hanging until the scheduler's timeout.
-- **Check that the run was actually scored.** A missing or unloadable model
-  bundle does not fail the run: it exits 0 with every row `not_scored`. Anything
-  that consumes the output unattended should check
-  `model_info.model_available` in the embedded payload, or a broken run reads
-  as a quiet week.
-- **Carry the caveat with any exported list.** A `top_band` list passed on
-  without the dashboard loses its banner and legend. Put
+Obey these rules:
+
+- **Give the screener no stdin.** If a new question has no environment
+  variable, the run then stops immediately. It does not wait until the
+  scheduler stops it.
+- **Make sure that the run scored the clusters.** If the model is not
+  available, the screener exits with code 0 and shows each row as `not_scored`. A program
+  that uses the output must examine `model_info.model_available`. If it does
+  not, a failed run looks like a week with no results.
+- **Send the caveat with each exported list.** A `top_band` list without the
+  dashboard does not have the banner and the legend. Put the text from
   `findings.top_band_caveat()` in the same file.
-- **Do not `source .env` from a shell.** `SEC_USER_AGENT` is an unquoted value
-  with spaces, so sourcing assigns the first word and runs the second as a
-  command. The screener reads `.env` itself; a wrapper does not need to.
-- **Run from a checkout nothing else writes to.** The run can take the better
-  part of an hour and the full parse cache is over a million files. A
-  file-sync tool sharing the working tree with another machine can rewrite
-  files underneath a live run, and the cache churn propagates to every peer.
-- **A missing day fails the run.** A daily index that cannot be fetched after
-  retries, or a lookback whose weekdays all come back empty (SEC answers a
-  blocked client with 403), exits non-zero rather than publishing a report
-  that is short a day.
+- **Do not use `source .env` in a shell.** The value of `SEC_USER_AGENT`
+  contains spaces and has no quotes. Thus, the shell sets the first word as the
+  value and runs the second word as a command. The screener reads `.env`
+  itself, so a wrapper script does not have to read it.
+- **Run the screener from a copy of the repository that no other program
+  changes.** A run can take almost one hour, and the full parse cache contains
+  more than one million files. A file-sync program can change files during a
+  run. It can also copy the cache changes to each other computer.
+- **Expect a failure if the data for a day is not available.** The run fails if the screener
+  cannot download a daily index after it tries again. The run also fails if
+  each weekday in the period gives an empty index. The SEC sends a 403
+  response to a blocked program, and the screener reads that as a holiday.
+  Thus, the screener does not publish a report that does not include each
+  day.
