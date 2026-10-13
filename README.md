@@ -115,6 +115,33 @@ python build_html.py
 
 It reads the payload back out of `out/dashboard.html` and overwrites the file.
 
+### Running it unattended
+
+For a scheduled run (cron, a systemd timer, Task Scheduler):
+
+```
+ICB_LOOKBACK=30 ICB_MIN_INSIDERS=2 ICB_WINDOW_DAYS=14 \
+    python insider_cluster_buys.py </dev/null
+```
+
+- **Give it no stdin.** If a prompt is ever added without an env override, the
+  run then fails at once instead of hanging until the scheduler's timeout.
+- **Check that the run was actually scored.** A missing or unloadable model
+  bundle does not fail the run: it exits 0 with every row `not_scored`. Anything
+  that consumes the output unattended should check
+  `model_info.model_available` in the embedded payload, or a broken run reads
+  as a quiet week.
+- **Carry the caveat with any exported list.** A `top_band` list passed on
+  without the dashboard loses its banner and legend. Put
+  `findings.top_band_caveat()` in the same file.
+- **Do not `source .env` from a shell.** `SEC_USER_AGENT` is an unquoted value
+  with spaces, so sourcing assigns the first word and runs the second as a
+  command. The screener reads `.env` itself; a wrapper does not need to.
+- **Run from a checkout nothing else writes to.** The run takes the better part
+  of an hour and the parse cache is over a million files. A file-sync tool
+  sharing the working tree with another machine can rewrite files underneath a
+  live run, and the cache churn propagates to every peer.
+
 ---
 
 ## Backtester
