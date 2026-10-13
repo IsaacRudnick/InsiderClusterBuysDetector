@@ -1,466 +1,236 @@
-# Insider Cluster-Buy Detector & Backtester
+# Insider Cluster Buys Detector
 
-Two programs over one signal: **clusters of SEC Form 4 open-market insider
-purchases**, at least N distinct reporting owners buying the same issuer
-inside a rolling window.
+Finds the moments when several people inside a company buy that company's
+stock at the same time, and tests, honestly, whether that is worth acting on.
 
-| | What it does | Entry point |
-|---|---|---|
-| **Live screener** | Scans recent EDGAR filings, scores today's clusters, writes a shareable dashboard | `run.bat` → `insider_cluster_buys.py` |
-| **Backtester** | Fits the ranking model, then runs 63 strategies × 7 exit methods over history | `backtest.bat` → `run_research.py` + `backtest.py` |
+> **Not financial advice.** This is a research and screening tool, and its own
+> conclusion is that following these purchases does not beat an index fund.
 
-Informational tooling, not financial advice.
+## The idea in one minute
 
-**The headline, up front. This is a triage tool. It tells you which insider
-cluster buys are worth manual research and which are not. It is not a trading
-system. Nothing tested here beats an index fund out of sample.**
+The people who run a company (its executives, its board members and its
+largest shareholders) are called **insiders**. U.S. law requires them to
+report every trade in their own company's stock to the SEC, the government's
+market regulator, within two business days. Those reports are public.
 
-The ranking is real. Monthly-cohort rank IC is +0.0883 (t=5.08), positive in
-7 of 7 out-of-sample years, with a volatility-neutral IC of +0.0630 against
-+0.0145 for a plain sort-by-low-volatility ranker. Two disjoint 5-seed halves
-rank-correlate +0.964. This is the first score measured here that does not
-move on the random seed.
+Insiders sell for all sorts of reasons: taxes, a house, spreading their money
+around. They usually *buy* for only one: they think the stock will go up. When
+**several** insiders at the same company buy with their own money within a
+couple of weeks, that is a **cluster buy**. A common piece of investing advice
+says to pay attention to them.
 
-What the ranking buys you is risk triage. The bottom 30% of the list carries
-a 7.9% chance of a loss worse than 30% in 21 days. That rate stayed between
-7.3% and 9.2% in every out-of-sample year. The 70th to 90th percentile band
-carries 1.2%. Use the bands to choose what to read, not what to buy.
+This project does two things with that idea:
 
-What the ranking does not buy you is a portfolio. A top-band book measured
-+34.5%/yr at Sharpe 1.303, against SPY's +18.1%/yr at Sharpe 1.192, and that
-Sharpe result passes a permutation test (p = 0.005). It does not survive
-contact with reality. The edge falls below SPY's under 50bps of round-trip
-cost, at every account size once positions are capped at 10% of a name's
-daily volume, and mostly disappears under a $5 minimum entry price. On a
-pre-registered holdout the band stops helping at all.
+1. **The screener** reads the latest SEC filings, finds recent cluster buys
+   and sorts them into a dashboard you open in a browser.
+2. **The research** replays eight years of history (2018 to 2026, about 11,000
+   cluster buys) to check whether the advice actually works.
 
-One mechanical change did survive that holdout. A 15% trailing stop, armed
-once a position is up 10% and capped at 126 days, moved the whole unselected
-population from -1.65%/yr to +12.67%/yr with a smaller drawdown. It beat a
-fixed 21-day hold in 25 of 25 tested combinations. It uses no model at all.
+## What it found
 
-Every absolute return above counts only companies that still trade. All 2,455
-delisted tickers were traced. 31.6% were acquired and 13.0% went bankrupt.
-Adding them back cuts the mean trade by 4.5 to 12.4 percentage points, so
-every return figure in this repo is too high.
+The short answer: **following cluster buys does not beat simply owning an index
+fund.** But the research did turn up something useful.
 
-Read [Findings](#findings-read-this-before-trusting-a-number) before you
-believe any number this produces.
+- **A cluster buy is not, on its own, a reason to buy.** On average, buying
+  after a cluster buy did about as well as a small-company index fund over two
+  weeks. The longer the stock was held, the worse it did.
+- **The project can spot the risky ones.** Its scoring model sorts cluster buys
+  into four groups. In the lowest-scoring 30%, about 1 in 13 stocks lost more
+  than 30% of its value within a month. That is roughly three times the rate of
+  the rest, and it held in every year tested. It is the most reliable result
+  here.
+- **A higher score is not always better.** The very top-scoring 10% did *worse*
+  than the group just below it.
+- **It does not add up to a winning portfolio.** Some versions looked as if
+  they beat the market, but the advantage disappeared once realistic trading
+  costs were included, or when they were tested on years they had not been
+  tuned on.
+- **One selling rule helped every time.** A *trailing stop* (once a stock is up
+  10%, sell if it falls 15% below its best price) beat "hold for a month, then
+  sell" in all 25 combinations tested. It doesn't need the scoring model.
+- **Every return figure here is a little too good.** About a third of the
+  companies in the data no longer trade: they were bought out, renamed or went
+  bankrupt, and their prices are missing. Putting them back lowers every
+  result, enough to wipe out the average trade's profit.
 
----
+So the dashboard works best as a **reading list and a skip list**. It tells you
+which cluster buys to research first and which to be wary of. It does not tell
+you which ones to buy.
 
-## Setup
-
-```
-copy .env.example .env
-```
-
-Then edit `.env` and set `SEC_USER_AGENT` to your real name and email. SEC
-fair-access rules require it; without one they throttle or block you. The
-scraper self-limits to 8 requests/second against SEC's published ceiling of 10.
-
-Both `.bat` files create `.venv`, install `requirements.txt`, and run from
-there. Nothing else to install. Python 3.11+ (developed on 3.14).
-
----
-
-## Live screener
+## How it works
 
 ```
-run.bat
+ SEC filings  ──▶  find cluster buys  ──▶  score each one  ──▶  dashboard
+ (public,          (2+ insiders buying      (a model trained      (four groups,
+  every day)        within 14 days)          on 8 years of         open it in a
+                                             history)              browser)
 ```
 
-Prompts for lookback days (30), minimum distinct insiders (2), and cluster
-window days (14). Set `ICB_LOOKBACK`, `ICB_MIN_INSIDERS`, `ICB_WINDOW_DAYS`
-to skip the prompts, necessary for a scheduled or piped run, where a bare
-`input()` with no stdin would block forever.
+1. **Download.** Every business day the SEC publishes a list of new filings.
+   The screener reads the insider-trade reports (a form called **Form 4**) for
+   the period you choose, 30 days by default.
+2. **Find clusters.** It keeps only ordinary purchases at the market price,
+   ignoring shares handed out as pay. Then it looks for companies where at
+   least 2 different insiders bought within 14 days of each other.
+3. **Score.** A model trained on eight years of past cluster buys gives each
+   new one a score and places it in a group.
+4. **Report.** It writes `out/dashboard.html`, a single file you can open or
+   email, plus a spreadsheet with the same data.
 
-Writes to `out/`, overwritten each run:
+## Reading the dashboard
 
-- `dashboard.html`, self-contained, shareable as a single attachment. The
-  full payload is embedded as a `<script type="application/json">` block, so
-  the file is both human- and machine-readable.
-- `insider_cluster_buys.xlsx`, Flagged Clusters / All Tx / Errors sheets.
+Each cluster buy gets a score from 0 to 100: its rank against eight years of
+past cluster buys. A score of 80 means it ranked above 80% of them. Scores are
+grouped into four bands:
 
-Clusters are sorted and badged by the **trained model**, no longer the old
-hand-tuned `conviction_score`, which measured at zero risk-adjusted edge, and
-no longer `oof_tail_classifier`, which ranked crash risk upward (see
-Findings). The score is `research/screen_model.py`: a 10-seed ensemble of
-quantile-regression rankers, built with `python run_research.py --fit-screen`,
-which writes `research_data/screen_model_<nrows>rows_<YYYYMMDD>.joblib`. The
-screener prefers that bundle and falls back to the older single-classifier
-`production_model_*.joblib` with a warning if it is missing. With neither on
-disk, rows render as `not_scored` rather than falling back to a score that
-does not work.
+| Band | Score | How these have gone before | Suggested use |
+|---|---|---|---|
+| **Top band** | 70 to 90 | The lowest chance of a big loss: about 1 in 75 lost more than 30% within a month. Typically about even with the market, so not a predicted winner. | Research first |
+| **Above band** | 90 to 100 | Scored higher, but did worse than the top band, with about twice its chance of a big loss. | Research second |
+| **Middle** | 30 to 70 | Typically trailed the market slightly. | Low priority |
+| **Elevated risk** | 0 to 30 | About 1 in 13 lost more than 30% within a month. The clearest warning sign the project found. | Skip, or research with care |
 
-| Verdict | Percentile | What it means, and what to do |
-|---|---|---|
-| `top_band` | 70-90 | The best-measured band. Median -0.09% vs SPY, 49.5% win rate, 1.21% chance of losing more than 30% in 21 days. **Research these first.** The median is roughly flat against SPY, so this is a reading queue and not an expected winner. |
-| `above_band` | 90-100 | Scored higher, and measured WORSE than `top_band` on both median (-0.52%) and crash rate (2.97%), in 5 of 7 out-of-sample years. A higher score is not a better candidate. Research these second. |
-| `middle` | 30-70 | Median -0.83%, crash rate 2.64%. Low priority. |
-| `elevated_risk` | 0-30 | Median -2.68%, 43.6% win rate, and a 7.88% chance of losing more than 30% in three weeks. That rate sat between 7.3% and 9.2% in every single out-of-sample year. The most durable result this project has. **Skip these,** or research them knowing that. |
-| `unavailable` | - | Too many of the model's inputs could not be computed. |
-| `not_scored` | - | No bundle on disk this run. |
+Two other labels can appear. **Unavailable** means there was not enough data
+about that company to score it. **Not scored** means no trained model was
+found; see [Getting scores](#getting-scores).
 
-Every evidence claim the dashboard makes comes from `findings.py`, which keeps
-each number next to its provenance so that correcting the research corrects the
-product. Do not hard-code an evidence claim into a rendering function.
+## Getting started
 
-To re-render the dashboard after editing CSS or legend copy, without paying
-for a fresh EDGAR scan:
+### What you need
 
-```
-python build_html.py
-```
+- **Python 3.11 or newer.**
+- **Your name and email address.** The SEC asks every automated visitor to
+  identify itself and may block one that doesn't. The screener also keeps
+  itself under the SEC's speed limit.
+- **Some patience the first time.** The screener downloads every filing in the
+  period you choose, which can take half an hour or more. Later runs reuse what
+  they already downloaded.
 
-It reads the payload back out of `out/dashboard.html` and overwrites the file.
+### Run the screener
 
-### Running it unattended
+1. Copy the settings template:
 
-For a scheduled run (cron, a systemd timer, Task Scheduler):
+   ```
+   copy .env.example .env        (Windows)
+   cp .env.example .env          (Mac / Linux)
+   ```
 
-```
-ICB_LOOKBACK=30 ICB_MIN_INSIDERS=2 ICB_WINDOW_DAYS=14 \
-    python insider_cluster_buys.py </dev/null
-```
+   Open `.env` and set `SEC_USER_AGENT` to your name and email, for example
+   `SEC_USER_AGENT=Jane Smith jane@example.com`.
 
-- **Give it no stdin.** If a prompt is ever added without an env override, the
-  run then fails at once instead of hanging until the scheduler's timeout.
-- **Check that the run was actually scored.** A missing or unloadable model
-  bundle does not fail the run: it exits 0 with every row `not_scored`. Anything
-  that consumes the output unattended should check
-  `model_info.model_available` in the embedded payload, or a broken run reads
-  as a quiet week.
-- **Carry the caveat with any exported list.** A `top_band` list passed on
-  without the dashboard loses its banner and legend. Put
-  `findings.top_band_caveat()` in the same file.
-- **Do not `source .env` from a shell.** `SEC_USER_AGENT` is an unquoted value
-  with spaces, so sourcing assigns the first word and runs the second as a
-  command. The screener reads `.env` itself; a wrapper does not need to.
-- **Run from a checkout nothing else writes to.** The run takes the better part
-  of an hour and the parse cache is over a million files. A file-sync tool
-  sharing the working tree with another machine can rewrite files underneath a
-  live run, and the cache churn propagates to every peer.
+2. Start it.
 
----
+   - **Windows:** run `run.bat`. It sets up its own Python environment the
+     first time.
+   - **Mac / Linux:**
 
-## Backtester
+     ```
+     python3 -m venv .venv
+     . .venv/bin/activate
+     pip install -r requirements.txt
+     python insider_cluster_buys.py
+     ```
 
-```
-backtest.bat
-```
+3. Answer three questions, or press Enter to keep each default:
+   - how many days back to look (30),
+   - how many different insiders make a cluster (2),
+   - how close together their purchases must be (14 days).
 
-Asks once for the history window in months (default 96), then runs two stages
-with that same window:
+4. Open `out/dashboard.html` in a browser.
 
-1. **`run_research.py --all`**, rebuilds the event dataset from EDGAR and
-   refits the ranking model, writing `research_data/oof_scores_*.parquet`.
-2. **`backtest.py`**, the strategy grid, ranking on the scores stage 1 just
-   wrote.
+### Getting scores
 
-Stage 1 hands stage 2 the exact parquet it produced via a pointer file, rather
-than letting `backtest.py` re-resolve `latest` by mtime, that glob's tiebreak
-is arbitrary when several score files share a timestamp, and it has silently
-selected the wrong model before.
-
-A full `--all` run re-scrapes EDGAR and takes **hours** (roughly a day per year
-of history). To refit from the cached events parquet in minutes instead:
+A fresh copy of this project has no trained model, so the first dashboard
+lists every cluster buy as **Not scored**. The model is built from eight years
+of history, which has to be downloaded once. That is slow (roughly a day per
+year of history) and takes several GB of disk:
 
 ```
-set BT_TRAIN_ARGS=--fit-model --events-from latest
-backtest.bat
+python run_research.py --all          # download the history and build the research data
+python run_research.py --fit-screen   # train the model the screener uses
 ```
 
-Or skip training entirely with `BT_TRAIN=0` and backtest against whatever
-`BT_MODEL_SCORES` already points at.
+After that, every screener run is scored. To also replay trading strategies
+over that history, see [docs/backtester.md](docs/backtester.md).
 
-### Research pipeline on its own
+## How much to trust the numbers
 
-```
-python run_research.py --build-dataset    # research_*.parquet   (one row per cluster episode)
-python run_research.py --fit-model        # oof_scores_*.parquet (purged walk-forward CV)
-python run_research.py --all              # both, in order
-python run_research.py --fit-screen       # screen_model_*.joblib, the score the live screener sorts by
-python run_research.py --fit-production   # production_model_*.joblib, retired single-classifier bundle
-python run_research.py --dry-run          # row counts and planned paths, writes nothing
-```
+The project checks itself hard, and has caught itself several times:
 
-`--fit-screen` and `--fit-production` are opt-in and deliberately not part of
-`--all`: they are deployment artifacts, not research ones. `--fit-production`
-builds the retired single-classifier bundle (`oof_tail_classifier`, which
-ranked crash risk upward, see Findings) and is kept only for reproducing old
-results; the live screener no longer prefers it.
+- It once counted every insider filing twice. That was fixed in September
+  2026, and every number was measured again.
+- A strategy that looked like a big winner turned out to owe most of its profit
+  to one stock whose share split had not been accounted for.
+- The best of 7,560 strategy variations, tested on years it had never seen,
+  lost money.
 
-Row counts between `--build-dataset` and `--fit-model` are not 1:1. The fit
-stage drops rows with no usable label or entry index, then cuts the remainder
-into purged folds. That gap is expected.
+A result now counts only if it holds up on years it was not chosen on, and if
+it does better than the same search run on shuffled, meaningless data. Most
+results don't survive that. The positive results in this README are the ones
+that did. The full list, with numbers, is in
+[docs/findings.md](docs/findings.md).
 
-### Strategies
+## What's in this repository
 
-63 registered in `backtest/strategies.py`, in families:
-
-- **Hand-built gates**, `all_clusters_equal_weight`, `conviction_only`,
-  `ten_percent_owner_gated`, `big_money_director`, `low_vol_conviction`, and
-  friends, plus stop-loss and fixed-63-day-hold variants.
-- **`thr_gt_*`**, equal-weight above each `conviction_score` threshold, −5
-  through +13. A sweep, not 19 ideas.
-- **`learned_*`**, six strategies fit inside the backtest. **In-sample; do
-  not trust their results.** Fitting costs about 8 minutes; `BT_FIT=0` skips
-  them.
-- **`model_ranked_*`**, the real ones. Rank by the trained model's OOF score
-  and hold the top N (5 … 100) for a fixed 63, 21, or 10 trading days.
-
-Each runs as an independent portfolio against 7 exit methods: fixed 30/90/180/
-365-day holds, and 365-day-capped trailing stops at 10/20/30% per FIFO lot.
-SPY buy-and-hold is the benchmark.
-
-Note that the exit grid barely binds. Over 99% of exits are *trims* triggered
-by signal decay, not expiries, median hold is 7–10 days even under the "365d"
-method. Fixed-hold strategies exist to address this.
-
-### Environment variables
-
-Every `BT_*` variable, read by `backtest.py`:
-
-| Variable | Meaning |
+| File or folder | What it is |
 |---|---|
-| `BT_MONTHS` | History window. `backtest.bat` asks once and passes it to both stages. |
-| `BT_AS_OF` | `YYYY-MM-DD` window end. Pin it or a run is not reproducible. |
-| `BT_EVENTS_FROM` | Path to an events parquet, or `latest`. Skips the scrape. |
-| `BT_MODEL_SCORES` | Path to an OOF scores parquet, or `latest`. |
-| `BT_CAPITAL` | Starting capital per strategy. |
-| `BT_STRATEGIES`, `BT_EXITS` | Comma lists, or `all`. |
-| `BT_RF` | `zero` or `tbills`. |
-| `BT_OFFLINE` | `0`/`1`. Cache-only, no network. |
-| `BT_SLIPPAGE_BPS`, `BT_LIQUIDITY_FLOOR`, `BT_MIN_PRICE` | Trading frictions. Keep `BT_MIN_PRICE`, see Findings. |
-| `BT_COST_SWEEP` | `none` or `low_med_high`. |
-| `BT_FIT`, `BT_FIT_HORIZON` | Fit the in-sample `learned_*` strategies (30/90/180/365). |
-| `BT_DROP_TICKER_REUSE` | Default `1`. Drop events whose ticker later changed hands to an unrelated company. |
-| `BT_WRITE_WEIGHTS`, `BT_VERBOSE` | Diagnostics. |
+| `insider_cluster_buys.py` | The screener. Start here. |
+| `run.bat` | Windows launcher for the screener. |
+| `findings.py` | Every measured result the dashboard quotes, each with its source. Correct a number here and the dashboard corrects itself. |
+| `build_html.py` | Draws the dashboard. |
+| `research/` | The scoring model. |
+| `run_research.py` | Builds the history dataset and trains the model. |
+| `backtest.py`, `backtest/`, `backtest.bat` | The backtester, which replays strategies over history. |
+| `tools/` | Individual research experiments, each runnable on its own. |
+| `tests/` | Automated tests: `python -m pytest tests -q`. |
+| `RESEARCH_NOTES.md` | The lab notebook: every experiment, including the failures. |
 
-Output lands in `out/backtest_<timestamp>/`: `report.html` plus
-`equity_*.csv` and `trades_*.csv` per strategy × exit pair. A full grid run is
-hundreds of MB.
+## Learn more
 
-### Research: re-running the candidate sweep
+- [docs/screener.md](docs/screener.md): how the screener and its model work,
+  every output and setting, and running it on a schedule.
+- [docs/backtester.md](docs/backtester.md): the backtester and the research
+  pipeline.
+- [docs/findings.md](docs/findings.md): every result, with numbers and
+  caveats.
+- [docs/code-layout.md](docs/code-layout.md): every module, and the data
+  caches the project builds.
+- [RESEARCH_NOTES.md](RESEARCH_NOTES.md): the full research record, in the
+  order it happened.
 
-```
-python tools/run_score_lab.py --seeds 0,1,2      # every pre-registered candidate
-python tools/ship_candidate.py --seeds 10        # the chosen score, deep audit
-python tools/band_robustness.py                  # the audits that kill a band claim
-```
+## Glossary
 
-Every candidate is reported, pass or fail, the 19 in `tools/run_score_lab.py`
-are all there is, and adding a 20th means re-running and re-reporting the
-whole list, not quoting the new one alone.
-
----
-
-## Layout
-
-```
-backtest.py                 entry point, the strategy grid
-run_research.py             entry point, dataset build + model fit
-insider_cluster_buys.py     entry point, the live EDGAR screener
-build_html.py               dashboard renderer (one consumer: the screener)
-findings.py                 every measured claim the product states, next to its
-                            provenance. Correcting the research here corrects
-                            the dashboard and the workbook. Never inline a
-                            number into a rendering function.
-ipo_lookup.py               first-trade dates; shared by the screener AND backtest/
-
-backtest/                   the backtester's own modules
-  engine, strategies, metrics, report, state, history, prices, splits,
-  research, model_scores, signal_fit, legend, sales_history, tickers,
-  ticker_reuse, price_overrides, split_fingerprint
-
-research/                   the ranking model
-  model.py                  fit_and_validate, purged walk-forward CV
-  live_score.py             scores one live cluster from a production bundle
-  screen_model.py           the score the live screener sorts by
-
-tools/                      standalone CLIs, each `python tools/<name>.py`
-  warm_prices               bulk-fill the price cache
-  repair_price_cache        (see Findings, rests on a false premise)
-  issuer_meta               fetch SIC / exchange per issuer CIK from SEC
-  ensemble_model            blend model objectives
-  refit_stability           re-fit under perturbation, measure retention
-  objective_sweep           sweep TAIL_THRESH and objective choice
-  score_lab                 out-of-fold score construction plus the fixed
-                            pre-registered gauntlet every candidate is graded on
-  run_score_lab             the 19 pre-registered candidates and the runner
-  ship_candidate            deep audit of the chosen score against the one it
-                            replaces
-  band_backtest             which percentile band to surface, measured against
-                            SPY, IWM and IWC
-  band_robustness           the permutation, concentration, price-floor,
-                            split-half and leave-one-year-out audits that killed
-                            the band's return claim
-  settle_band               band vs no band on the holdout, sweeping the slot
-                            count both disputed tables left unfixed. The band's
-                            sign flips; the exit rule's does not.
-
-tests/                      pytest; `python -m pytest tests -q`
-  test_findings.py          guards the claims the product makes about itself.
-                            Not that the numbers are right, which only the
-                            research can say, but that every headline number
-                            travels with the limit that applies to it.
-```
-
-Everything in `tools/` is dual-purpose, importable as a library and runnable
-as `python tools/name.py`. Python puts a script's *own* directory on
-`sys.path[0]`, not the repo root, so each carries a guarded `REPO_ROOT`
-bootstrap to find its siblings.
-
-### Caches (all gitignored, all reproducible, none cheap)
-
-| Directory | Contents | Cost to rebuild |
-|---|---|---|
-| `parse_cache/` | One JSON per SEC accession, ~1.3M files, ~2 GB | ~1 day per year of history |
-| `price_cache/` | Per-ticker parquets, ~420 MB | Refetched from Yahoo on demand |
-| `clusters_history/` | Scraped event parquets, ~100 MB | The scrape above |
-| `research_data/` | Datasets, OOF scores, fitted bundles | Minutes, given the above |
-| `ipo_cache/`, `issuer_meta_cache/` | Per-ticker / per-CIK JSON | Cheap |
-| `out/` | Reports and dashboards | Cheap |
-
-Back up `parse_cache/` and `clusters_history/`. They are the expensive ones.
-
----
-
-## Findings, read this before trusting a number
-
-`RESEARCH_NOTES.md` is the full record. The short version, because several of
-these invalidate the obvious reading of a report:
-
-- **The cluster-buy event is not a buy signal.** Held ~2 weeks, the average
-  flagged cluster returns −0.69%/yr against a small-cap index fund -
-  indistinguishable from just owning the index. Held longer it does *worse*:
-  −6.5%/yr at 21 days, −10.7%/yr at 63. The curve only slopes down, so there is
-  no post-filing drift to capture.
-- **The old shipped score ranked crash risk upward, on every horizon it was
-  graded at.** At 63 days: pooled rank IC −0.053, positive in only 1 of 7
-  years, top decile ~6x the 30%-loss rate of the bottom decile. An earlier
-  volatility-matched test found +4.74pp (p=0.004) for that same top decile;
-  both can be true, fat right tail *and* fat left tail, but the encouraging
-  half alone is misleading. Graded again at 21 days on the pre-registered
-  gauntlet built for its replacement: monthly IC −0.0368, positive in 2 of 7
-  years, volatility-neutral IC +0.0130, below a plain sort-by-low-volatility
-  ranker. Replaced throughout the codebase.
-- **None of the obvious quality filters work.** More insiders, bigger dollar
-  amounts, CEO share of buying, ten-percent-owner involvement, and reacting
-  faster to a fresh filing were each tested by quartile. All flat.
-- **Survivorship bias caps everything above.** 33.2% of tickers are
-  unpriceable, they stopped trading and the provider deleted them, along with
-  24.9% of buy rows and 27.1% of buy dollars. Those rows are *dropped*, not
-  zeroed, so every absolute return is optimistic by an unknown margin.
-- **Half the "insiders pick badly" result is the size factor**, not insider
-  skill: small caps trailed SPY by ~6pp/yr over the measured window. Both SPY
-  and IWM/IWC yardsticks are kept for that reason, reporting only the
-  flattering one is benchmark shopping.
-- **A ranking that holds up now ships to the live screener.** The 21-day,
-  quantile-regression ensemble in `research/screen_model.py` gives monotone
-  deciles, positive in 7 of 7 years, and survives a volatility-neutral audit
-  that four higher-headline candidates failed. The backtester's own model,
-  `research/model.py`, still fits against `adj_63`.
-- **The top of the ranking is not the best part of it.** Decile 9 is worse
-  than decile 8 on both median and crash rate, in 5 of 7 out-of-sample years.
-  Sorting descending and taking the top N, what the old score's verdicts
-  did, lands on the wrong rows.
-- **Sector-relative training, an earlier finding, did not replicate.**
-  Month-relative alone beats it on every axis of the gauntlet.
-- **Strip the 12 price/momentum/volatility features and the ranking
-  disappears.** IC −0.004. This is price context, not evidence that insiders
-  pick well.
-- **A best-of-N band search on a fat-tailed return distribution manufactures
-  a return from noise.** The 70-90th percentile book's +19.77%/yr over SPY
-  produced a permutation-test null median of +18.46%/yr (p = 0.435) when the
-  same 12-band search ran on shuffled scores. Any band or top-N return figure
-  from this repo needs a permutation test, not just a bootstrap, the
-  bootstrap prices the sampling of periods but not the selection of the band.
-- **`conviction_score` does not rank.** No monotonicity; score −1 beats +9 and
-  +10. Retained for comparison only, and gone from the dashboard.
-- **The top band's Sharpe, not just its return, now passes a permutation
-  test.** Holding a 70-90th-percentile book measured Sharpe 1.303 (Sortino
-  1.400, +34.5%/yr) against SPY's Sharpe 1.192 (+18.1%/yr), a 5.77x final
-  multiple against SPY's 2.76x, beating SPY in 4 of 7 years, and that Sharpe
-  result survives re-running the same 132-recipe search on shuffled scores
-  (p = 0.005; null median 0.987, 95th percentile 1.236). The earlier raw-return
-  version of this same book (+19.77%/yr) failed an identical test (p = 0.435).
-  The two disagree because a fat right tail inflates mean return and
-  volatility together, that can inflate a raw return statistic by chance, but
-  not a ratio of the two.
-- **Sharpe rises with score, not just return.** Sharpe climbs from 0.21 in
-  the bottom decile to 1.33 in the top, a risk-adjusted confirmation of the
-  band ordering, not only a return-based one.
-- **The Sharpe result is not harvestable.** Cost: Sharpe falls below SPY's
-  somewhere under 50bps round trip (1.303 at 20bps, 1.147 at 50bps, 0.886 at
-  100bps). Liquidity: capping a position at 10% of a name's 20-day dollar
-  volume gives Sharpe 1.107 at $100k of capital, 0.982 at $1M, 0.750 at $25M -
-  below SPY (1.192) at every size tested. Price floor: a $5 minimum entry
-  price cuts annual excess over SPY from +14.1% to +3.2%. These are not
-  optional footnotes, they travel with the number everywhere it is shown.
-- **Refitting inside a tradeable universe does not rescue it.** Rebuilding the
-  model with a $5 price floor, a $1M book, and 50bps costs gives Sharpe 0.650
-  against SPY's 1.237 over the same window.
-- **Long the top band, short the bottom band does not work either.** The
-  bottom band ("elevated risk") still rises in absolute terms over this
-  window, it is the worst-*measured* book, not a losing one, so shorting it
-  loses money on the short leg regardless of the long leg's edge.
-- **Point-in-time earnings-proximity features were built and tested, and they
-  do not help.** Adding them to the live score's feature set moved
-  monthly-cohort IC from +0.0885 to +0.0804, a decline, not an improvement.
-  Not shipped.
-- **Sub-dollar lots and unadjusted splits used to decide the leaderboard.**
-  0.7% of lots once produced 58% of grid P&L, and a single unadjusted reverse
-  split gave a "winning" strategy 83% of its P&L. `BT_MIN_PRICE` and
-  `backtest/split_fingerprint.py` exist because of this. Audit P&L
-  concentration before believing any ranking.
-- **Refit instability decides the headline.** 1.07% fewer training rows moved a
-  flagship result from +229.6% to +151.0%. Only the 5-slot variant survived.
-- **A pre-registered holdout caught the whole search.** 7,560
-  configurations of universe filter, band, exit rule and slot count were
-  scored on a selection window. The best scored Sharpe 1.437 there and 0.400
-  on a holdout it had never seen. The entire top-ten region failed with it,
-  at holdout Sharpe -0.009 to +0.676, every one below SPY's 1.456. One bad
-  draw is noise. A whole region collapsing is the search getting caught.
-  `tools/final_search.py`.
-- **Every absolute return in this repo is too high, and the bias runs both
-  ways.** 33.2% of tickers have no price history because they stopped
-  trading. All 2,455 were resolved against EDGAR: 31.6% acquired, 26.4%
-  renamed and still trading, 20.3% still filing without a ticker, 13.0%
-  bankrupt, 8.3% delisted without explanation. This overturns a standing
-  assumption in `RESEARCH_NOTES.md` that the missing rows would all land in
-  the bottom deciles. Deals close at a premium. Recovering the priceable ones
-  raises the true population from 10,861 events to 15,075, and bounding the
-  rest cuts the mean trade by 4.5 to 12.4 percentage points. Even the most
-  generous assumption erases the mean trade profit.
-- **Six free data sources were added and five made the holdout book worse.**
-  FINRA short interest, SEC bulk XBRL fundamentals, 13D/13G and 8-K item
-  codes, a FRED regime overlay and unused Form 4 fields were each attached
-  point-in-time and tested. The 13D/8-K set had the best in-sample ranking of
-  anything measured here and still lost out of sample. One descriptive lead
-  survived: companies closest to running out of cash do worst, monotonically.
-  Adding data is adding selection, and selection is what does not survive.
-- **The score band does not improve a traded book out of sample; the exit
-  rule does.** Two holdout tables in `RESEARCH_NOTES.md` disagreed on this.
-  Re-run with only the band and the slot count varying (`tools/settle_band.py`),
-  the shipped 70-90 band beats an unbanded book at 5 slots and loses at 10, 15,
-  20 and 30 -- mean Sharpe -0.137, helping in 1 of 5 slot counts. A percentile
-  band should not care how many positions the book holds, so read it as noise.
-  In the same 50-cell grid the trailing stop beats the fixed 21-day hold in
-  **25 of 25 cells** (mean +0.637 Sharpe, +10.75pp/yr). Rank for risk triage,
-  not for portfolio construction.
-- **The `learned_*` strategies are in-sample.** They are in the grid for
-  completeness. Their numbers are not evidence.
-
-Numbers above are sourced from `findings.py` (provenance:
-`research_groupE_10905rows_20260809.parquet`, 10,905 cluster episodes,
-2018-08…2026-08, expanding-window out-of-sample, measured 2026-08-13) and
-`RESEARCH_NOTES.md`. The `screen_model.py` gauntlet and band numbers are from
-`research_10861rows_20260813.parquet`, 9,095 scored cluster episodes,
-out-of-sample 2020-2026, measured 2026-08-20, `RESEARCH_NOTES.md`, "A ranking
-that beats the shipped one, and a portfolio claim that dies". The
-risk-adjusted book results (`findings.BOOK_RESULTS`) are from the same
-parquet, a 10-seed ensemble of `C19_month_vol_rel_a35_live`, 78
-non-overlapping 21-trading-day periods, equal weight, 20bps round trip,
-measured 2026-08-20.
+- **Insider:** a company's officers (CEO, CFO and so on), its directors, and
+  anyone who owns more than 10% of its stock.
+- **SEC, EDGAR:** the U.S. Securities and Exchange Commission, and its public
+  database of company filings.
+- **Form 4:** the form an insider files to report a trade in their company's
+  stock, due within two business days.
+- **Open-market purchase:** buying shares at the going price with one's own
+  money, as opposed to receiving them as pay.
+- **Cluster buy:** two or more different insiders at one company making
+  open-market purchases within a set number of days (14 by default).
+- **Index fund, SPY, IWM:** a fund that simply owns a whole slice of the
+  market. SPY follows the 500 largest U.S. companies; IWM follows about 2,000
+  small ones. "Beating the market" means doing better than funds like these.
+- **Small-cap:** a company whose total stock-market value is small. Most
+  cluster buys happen in small-caps.
+- **Percentile:** a rank out of 100. The 80th percentile is higher than 80% of
+  the group.
+- **Backtest:** replaying a trading strategy on past data to see how it would
+  have done.
+- **Holdout, out of sample:** data set aside and not used to build or tune a
+  strategy, kept for a fair final test. A result that only works on the data
+  it was tuned on is usually luck.
+- **Permutation test:** a luck check. Run the same search many times on
+  shuffled data; if the shuffled data often does as well, the original result
+  is not real.
+- **Trailing stop:** a selling rule that tracks a stock's highest price since
+  purchase and sells once it falls a set percentage below that peak.
+- **Survivorship bias:** the distortion from only seeing what survived.
+  Companies that went bankrupt or were bought out drop out of price data, so
+  history looks better than it really was.
+- **Trading day:** a day the stock market is open; about 21 in a month and 252
+  in a year.
+- **Sharpe ratio:** return divided by how much it swung up and down along the
+  way. Higher is better. The technical docs use it throughout.

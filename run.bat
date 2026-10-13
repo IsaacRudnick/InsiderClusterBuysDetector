@@ -11,8 +11,8 @@ REM  Set ICB_LOOKBACK, ICB_MIN_INSIDERS, ICB_WINDOW_DAYS to skip the
 REM  prompts -- required for a scheduled or piped run, where a bare
 REM  input() with no stdin blocks forever.
 REM
-REM  Cluster ranking needs a production model bundle in research_data/.
-REM  Build one with:  python run_research.py --fit-production
+REM  Cluster ranking needs a model bundle in research_data/. Build one with
+REM  python run_research.py --all, then --fit-screen (see README.md).
 REM  Without it, every row renders as "not_scored" rather than falling
 REM  back to conviction_score, which measured at zero risk-adjusted edge.
 REM
