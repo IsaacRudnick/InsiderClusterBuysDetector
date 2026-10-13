@@ -382,6 +382,24 @@ def top_band_permutation_note() -> str:
     )
 
 
+def top_band_caveat() -> str:
+    """The warning that must travel with any exported list of top_band
+    clusters. A list handed on without the dashboard around it -- a file, a
+    feed, a page another program reads -- loses the banner and legend, so the
+    limit has to ride along in the same document. One self-contained
+    paragraph, every figure taken from the constants in this module."""
+    tb = BANDS_BY_VERDICT["top_band"]
+    return (
+        f"top_band is the {tb.pctl_lo:.0f}th to {tb.pctl_hi:.0f}th score "
+        "percentile: the reading queue, not an expected winner. Its measured "
+        f"median 21-day excess vs SPY is {tb.median_excess * 100:+.2f}% with a "
+        f"{tb.win_rate * 100:.1f}% win rate, and its apparent "
+        f"{TOP_BAND_ANNUALIZED_EXCESS * 100:+.2f}%/yr failed a permutation test "
+        f"at p={TOP_BAND_PERMUTATION_P:.3f}. Do not treat inclusion as a buy "
+        "signal."
+    )
+
+
 def expectation_rows() -> list[tuple[str, str, str, str, str]]:
     """(hold, vs SPY, vs small cap, vs micro cap, win rate) as display strings."""
     def pct(v: float) -> str:

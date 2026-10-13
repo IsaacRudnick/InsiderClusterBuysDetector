@@ -21,6 +21,7 @@ NOTE_FUNCS = (
     "prev_score_contrast_note",
     "elevated_risk_crash_note",
     "top_band_permutation_note",
+    "top_band_caveat",
     "risk_adjusted_note",
     "harvestability_note",
     "top_band_holding_summary",
@@ -126,6 +127,15 @@ def test_harvestability_note_carries_both_corrections():
     text = findings.harvestability_note().lower()
     for term in ("cost", "liquidity", "price floor", "holdout", "survivorship"):
         assert term in text, term
+
+
+def test_top_band_caveat_carries_the_failed_test():
+    """An exported top_band list reaches readers who never see the dashboard,
+    so its caveat must state the failed permutation test and say outright
+    that inclusion is not a buy signal."""
+    text = findings.top_band_caveat()
+    assert f"p={findings.TOP_BAND_PERMUTATION_P:.3f}" in text
+    assert "not treat inclusion as a buy signal" in text
 
 
 def test_key_points_state_the_retired_claims():
