@@ -1,0 +1,15 @@
+# This repo is developed on both Windows and Linux, and a checkout shared
+# between them (by a file-sync tool, or core.autocrlf on one side) flips line
+# endings underneath git. Normalise everything to LF in the index; only the
+# Windows entry points keep CRLF on checkout.
+* text=auto eol=lf
+
+*.bat text eol=crlf
+
+# Shell scripts must stay LF: a CRLF shebang breaks them on Linux.
+*.sh text eol=lf
+
+# Binary payloads git must never touch.
+*.joblib binary
+*.parquet binary
+*.xlsx binary
